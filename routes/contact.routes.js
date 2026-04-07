@@ -7,6 +7,7 @@ const contact = require('../controllers/contact.controller');
 router.post('/import', protect, csvUpload.single('file'), contact.importContacts);
 router.post('/groups', protect, contact.createGroup);
 router.get('/groups', protect, contact.listGroups);
+router.delete('/groups/:id', protect, contact.deleteGroup);
 
 router.post('/', protect, contact.createContact);
 router.get('/', protect, contact.listContacts);

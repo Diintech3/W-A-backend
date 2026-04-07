@@ -167,3 +167,13 @@ exports.listGroups = async (req, res) => {
     return fail(res, e.message || 'Failed to list groups', 500);
   }
 };
+
+exports.deleteGroup = async (req, res) => {
+  try {
+    const group = await ContactGroup.findOneAndDelete({ _id: req.params.id, userId: req.user._id });
+    if (!group) return fail(res, 'Group not found', 404);
+    return success(res, null, 'Group deleted');
+  } catch (e) {
+    return fail(res, e.message || 'Failed to delete group', 500);
+  }
+};
