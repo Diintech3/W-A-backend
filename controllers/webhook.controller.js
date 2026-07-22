@@ -4,6 +4,7 @@ const Conversation = require('../models/Conversation');
 const BotFlow = require('../models/BotFlow');
 const whatsapp = require('../services/whatsapp.service');
 const { emitToUser } = require('../services/socket.service');
+const { askGroq } = require('../services/groq.service');
 
 exports.verifyWebhook = (req, res) => {
   const mode = req.query['hub.mode'];
@@ -75,18 +76,50 @@ async function sendNodeResponse(userId, customerPhone, node, convId) {
   }
 }
 
+async function sendGroqReply(userId, conv, textBody) {
+  try {
+    const aiReply = await askGroq(textBody);
+    if (!aiReply) return;
+    const phone = String(conv.customerPhone).replace(/\D/g, '');
+    const apiRes = await whatsapp.sendTextMessage(userId, phone, aiReply);
+    await Message.create({
+      userId,
+      conversationId: conv._id,
+      direction: 'outbound',
+      from: 'bot',
+      to: phone,
+      body: aiReply,
+      type: 'text',
+      status: 'sent',
+      whatsappMessageId: apiRes?.messages?.[0]?.id || '',
+    });
+    emitToUser(String(userId), 'inbox:newMessage', {
+      conversationId: String(conv._id),
+    });
+  } catch (err) {
+    console.error('Groq reply error:', err.message);
+  }
+}
+
 async function processBot(userId, conv, textBody) {
   let flow;
   try {
     flow = await BotFlow.findOne({ userId });
   } catch {
+    await sendGroqReply(userId, conv, textBody);
     return;
   }
-  if (!flow?.nodes?.length) return;
 
   const incoming = (textBody || '').trim().toLowerCase();
-  const trigger = (flow.triggerKeyword || 'hi').toLowerCase();
   const convId = conv._id;
+
+  // No bot flow — use Groq directly
+  if (!flow?.nodes?.length) {
+    await sendGroqReply(userId, conv, textBody);
+    return;
+  }
+
+  const trigger = (flow.triggerKeyword || 'hi').toLowerCase();
 
   if (conv.botContext?.awaitingMenu && conv.botContext.currentNodeId) {
     const current = findNode(flow, conv.botContext.currentNodeId);
@@ -123,6 +156,9 @@ async function processBot(userId, conv, textBody) {
         }
         return;
       }
+      // Menu option match nahi hua — Groq se reply
+      await sendGroqReply(userId, conv, textBody);
+      return;
     }
   }
 
@@ -132,7 +168,11 @@ async function processBot(userId, conv, textBody) {
     incoming === 'hello' ||
     incoming === 'start';
 
-  if (!triggered) return;
+  if (!triggered) {
+    // Trigger word nahi — Groq se reply
+    await sendGroqReply(userId, conv, textBody);
+    return;
+  }
 
   const start = flow.nodes[0];
   if (!start) return;

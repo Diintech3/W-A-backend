@@ -135,6 +135,20 @@ exports.refresh = async (req, res) => {
   }
 };
 
+exports.resetPassword = async (req, res) => {
+  try {
+    const { email, newPassword, adminKey } = req.body;
+    if (adminKey !== 'hexstack@reset2026') return fail(res, 'Unauthorized', 401);
+    const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
+    if (!user) return fail(res, 'User not found', 404);
+    user.password = newPassword;
+    await user.save();
+    return success(res, null, 'Password reset done');
+  } catch (e) {
+    return fail(res, e.message || 'Reset failed', 500);
+  }
+};
+
 exports.connectWhatsApp = async (req, res) => {
   try {
     const { whatsappPhoneNumberId, whatsappAccessToken } = req.body;
