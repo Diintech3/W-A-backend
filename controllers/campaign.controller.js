@@ -63,10 +63,10 @@ async function runCampaignSendJob(campaignId, userId) {
   await campaign.save();
 
   const params = templateParamsFromDoc(template);
-  let sent = campaign.sent || 0;
-  let delivered = campaign.delivered || 0;
-  let read = campaign.read || 0;
-  let failed = campaign.failed || 0;
+  let sent = 0;
+  let delivered = 0;
+  let read = 0;
+  let failed = 0;
 
   for (let i = 0; i < contacts.length; i++) {
     const contact = contacts[i];
@@ -185,6 +185,36 @@ exports.getCampaign = async (req, res) => {
     return success(res, { campaign, messages }, 'Campaign detail');
   } catch (e) {
     return fail(res, e.message || 'Failed to load campaign', 500);
+  }
+};
+
+exports.updateCampaign = async (req, res) => {
+  try {
+    const { name, targetGroup, template, scheduledAt } = req.body;
+    const campaign = await Campaign.findOne({ _id: req.params.id, userId: req.user._id });
+    if (!campaign) return fail(res, 'Campaign not found', 404);
+    if (campaign.status === 'running') return fail(res, 'Cannot edit a running campaign');
+
+    if (name !== undefined) campaign.name = name;
+    if (targetGroup !== undefined) campaign.targetGroup = targetGroup;
+    if (template !== undefined) campaign.template = template;
+    if (scheduledAt !== undefined) {
+      if (scheduledAt) {
+        const scheduleDate = new Date(scheduledAt);
+        if (scheduleDate > new Date()) {
+          campaign.scheduledAt = scheduleDate;
+          campaign.status = 'scheduled';
+        }
+      } else {
+        campaign.scheduledAt = null;
+        if (campaign.status === 'scheduled') campaign.status = 'draft';
+      }
+    }
+
+    await campaign.save();
+    return success(res, { campaign }, 'Campaign updated');
+  } catch (e) {
+    return fail(res, e.message || 'Failed to update campaign', 500);
   }
 };
 

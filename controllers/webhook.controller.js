@@ -4,7 +4,8 @@ const Conversation = require('../models/Conversation');
 const BotFlow = require('../models/BotFlow');
 const whatsapp = require('../services/whatsapp.service');
 const { emitToUser } = require('../services/socket.service');
-const { askGroq } = require('../services/groq.service');
+const ugcService = require('../services/ugc.service');
+const AIAgent = require('../models/AIAgent');
 
 exports.verifyWebhook = (req, res) => {
   const mode = req.query['hub.mode'];
@@ -76,10 +77,45 @@ async function sendNodeResponse(userId, customerPhone, node, convId) {
   }
 }
 
-async function sendGroqReply(userId, conv, textBody) {
+async function sendExternalAgentReply(userId, conv, textBody) {
+  const fs = require('fs');
+  const path = require('path');
+  const logPath = 'd:\\jan2026\\What\'sai\\W-A-backend\\debug_webhook.log';
+  
+  function logDebug(msg) {
+    const timestamp = new Date().toISOString();
+    fs.appendFileSync(logPath, `[${timestamp}] ${msg}\n`);
+    console.log(`[DEBUG Webhook] ${msg}`);
+  }
+
   try {
-    const aiReply = await askGroq(textBody);
-    if (!aiReply) return;
+    let aiReply = '';
+    logDebug(`Looking up AIAgent mapping for userId: ${userId}`);
+    const mapping = await AIAgent.findOne({ userId });
+    logDebug(`Found mapping in DB: ${JSON.stringify(mapping)}`);
+
+    if (!mapping || !mapping.externalAgentId) {
+      logDebug(`No AI Agent ID configured for user: ${userId}`);
+      return;
+    }
+
+    try {
+      logDebug(`Sending query to external agent: ${mapping.externalAgentId}`);
+      logDebug(`Question: "${textBody}"`);
+      logDebug(`Customer Phone: ${conv.customerPhone}`);
+      
+      aiReply = await ugcService.askAgent(mapping.externalAgentId, textBody, conv.customerPhone);
+      
+      logDebug(`Received answer from external agent: "${aiReply}"`);
+    } catch (agentErr) {
+      logDebug(`External agent query failed: ${agentErr.message}`);
+      return; // Groq completely commented out/removed
+    }
+
+    if (!aiReply) {
+      logDebug(`AI reply is empty, skipping WhatsApp message send.`);
+      return;
+    }
     const phone = String(conv.customerPhone).replace(/\D/g, '');
     const apiRes = await whatsapp.sendTextMessage(userId, phone, aiReply);
     await Message.create({
@@ -97,7 +133,7 @@ async function sendGroqReply(userId, conv, textBody) {
       conversationId: String(conv._id),
     });
   } catch (err) {
-    console.error('Groq reply error:', err.message);
+    logDebug(`AI reply error: ${err.message}`);
   }
 }
 
@@ -106,16 +142,16 @@ async function processBot(userId, conv, textBody) {
   try {
     flow = await BotFlow.findOne({ userId });
   } catch {
-    await sendGroqReply(userId, conv, textBody);
+    await sendExternalAgentReply(userId, conv, textBody);
     return;
   }
 
   const incoming = (textBody || '').trim().toLowerCase();
   const convId = conv._id;
 
-  // No bot flow — use Groq directly
+  // No bot flow — use External Agent directly
   if (!flow?.nodes?.length) {
-    await sendGroqReply(userId, conv, textBody);
+    await sendExternalAgentReply(userId, conv, textBody);
     return;
   }
 
@@ -156,8 +192,8 @@ async function processBot(userId, conv, textBody) {
         }
         return;
       }
-      // Menu option match nahi hua — Groq se reply
-      await sendGroqReply(userId, conv, textBody);
+      // Menu option match nahi hua — External Agent se reply
+      await sendExternalAgentReply(userId, conv, textBody);
       return;
     }
   }
@@ -169,8 +205,8 @@ async function processBot(userId, conv, textBody) {
     incoming === 'start';
 
   if (!triggered) {
-    // Trigger word nahi — Groq se reply
-    await sendGroqReply(userId, conv, textBody);
+    // Trigger word nahi — External Agent se reply
+    await sendExternalAgentReply(userId, conv, textBody);
     return;
   }
 

@@ -48,6 +48,8 @@ app.use(cookieParser());
 
 app.use('/api/auth', authRoutes);
 app.post('/api/whatsapp/connect', protect, authController.connectWhatsApp);
+app.post('/api/whatsapp/agent', protect, authController.saveAIAgentId);
+app.get('/api/whatsapp/agent', protect, authController.getAIAgentId);
 app.use('/api/contacts', contactRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/messages', messageRoutes);

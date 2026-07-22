@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { success, fail } = require('../utils/apiResponse');
 const { sendWelcomeEmail } = require('../services/email.service');
+const AIAgent = require('../models/AIAgent');
 
 const ACCESS_EXPIRES = '15m';
 const REFRESH_EXPIRES = '7d';
@@ -58,6 +59,7 @@ exports.register = async (req, res) => {
     setRefreshCookie(res, refreshToken);
     await sendWelcomeEmail(user.email, user.name).catch(() => {});
 
+
     return success(
       res,
       { user: sanitizeUser(user), accessToken },
@@ -85,6 +87,7 @@ exports.login = async (req, res) => {
     await user.save();
 
     setRefreshCookie(res, refreshToken);
+
 
     return success(res, { user: sanitizeUser(user), accessToken }, 'Logged in');
   } catch (e) {
@@ -165,3 +168,32 @@ exports.connectWhatsApp = async (req, res) => {
     return fail(res, e.message || 'Failed to save connection', 500);
   }
 };
+
+exports.saveAIAgentId = async (req, res) => {
+  try {
+    const { agentId } = req.body;
+    if (agentId === undefined) {
+      return fail(res, 'AI Agent ID is required');
+    }
+    const userId = req.user._id;
+    const mapping = await AIAgent.findOneAndUpdate(
+      { userId },
+      { userId, externalAgentId: String(agentId).trim() },
+      { upsert: true, new: true }
+    );
+    return success(res, { agentId: mapping.externalAgentId }, 'AI Agent ID saved');
+  } catch (e) {
+    return fail(res, e.message || 'Failed to save AI Agent ID', 500);
+  }
+};
+
+exports.getAIAgentId = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const mapping = await AIAgent.findOne({ userId });
+    return success(res, { agentId: mapping ? mapping.externalAgentId : '' }, 'AI Agent ID');
+  } catch (e) {
+    return fail(res, e.message || 'Failed to get AI Agent ID', 500);
+  }
+};
+

@@ -6,6 +6,7 @@ const campaign = require('../controllers/campaign.controller');
 router.post('/', protect, campaign.createCampaign);
 router.get('/', protect, campaign.listCampaigns);
 router.get('/:id', protect, campaign.getCampaign);
+router.patch('/:id', protect, campaign.updateCampaign);
 router.post('/:id/send', protect, campaign.sendCampaign);
 router.delete('/:id', protect, campaign.deleteCampaign);
 
