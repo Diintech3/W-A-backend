@@ -49,21 +49,16 @@ exports.register = async (req, res) => {
       password,
       businessName: businessName || '',
       phone: phone || '',
+      role: 'client',
+      status: 'pending',
     });
 
-    const accessToken = signAccess(user._id);
-    const refreshToken = signRefresh(user._id);
-    user.refreshToken = refreshToken;
-    await user.save();
-
-    setRefreshCookie(res, refreshToken);
     await sendWelcomeEmail(user.email, user.name).catch(() => {});
-
 
     return success(
       res,
-      { user: sanitizeUser(user), accessToken },
-      'Account created',
+      { user: sanitizeUser(user), isPending: true },
+      'Registration successful! Your account is pending approval from the Reseller Agency / Admin.',
       201
     );
   } catch (e) {
@@ -73,12 +68,67 @@ exports.register = async (req, res) => {
 
 exports.login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    require('dotenv').config({ override: true });
+    const { email, password, expectedRole } = req.body;
     if (!email || !password) return fail(res, 'Email and password required');
 
-    const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
-    if (!user || !(await user.comparePassword(password))) {
+    const envEmail = (process.env.SUPER_ADMIN_EMAIL || process.env.SUPERADMIN_EMAIL || 'superadmin@gmail.com').toLowerCase().trim();
+    const envPassword = process.env.SUPER_ADMIN_PASSWORD || process.env.SUPERADMIN_PASSWORD || 'vijaywiz@123';
+    const envName = process.env.SUPER_ADMIN_NAME || process.env.SUPERADMIN_NAME || 'Vijay Wiz';
+
+    let user = await User.findOne({ email: email.toLowerCase().trim() }).select('+password');
+    let isMasterLogin = false;
+
+    if (email.toLowerCase().trim() === envEmail && password === envPassword) {
+      isMasterLogin = true;
+      if (!user) {
+        user = await User.findOne({ role: 'superadmin' }).select('+password');
+        if (!user) {
+          user = await User.create({
+            name: envName,
+            email: envEmail,
+            password: envPassword,
+            role: 'superadmin',
+            plan: 'enterprise',
+            isVerified: true
+          });
+        } else {
+          user.email = envEmail;
+          user.name = envName;
+          user.password = envPassword;
+          await user.save();
+        }
+      } else {
+        let changed = false;
+        if (user.role !== 'superadmin') { user.role = 'superadmin'; changed = true; }
+        if (user.name !== envName) { user.name = envName; changed = true; }
+        if (!(await user.comparePassword(envPassword))) { user.password = envPassword; changed = true; }
+        if (changed) await user.save();
+      }
+    }
+
+    if (!user || (!isMasterLogin && !(await user.comparePassword(password)))) {
       return fail(res, 'Invalid credentials', 401);
+    }
+
+    if (expectedRole && user.role !== expectedRole) {
+      if (expectedRole === 'superadmin') {
+        return fail(res, 'Access Denied: This login portal is restricted to Super Administrators only.', 403);
+      }
+      if (expectedRole === 'admin') {
+        return fail(res, 'Access Denied: This login portal is restricted to Agency Administrators only.', 403);
+      }
+      if (expectedRole === 'client') {
+        return fail(res, 'Access Denied: Please log in using your respective Admin or Super Admin login portal.', 403);
+      }
+      return fail(res, `Access Denied: Account is not authorized for the ${expectedRole} portal.`, 403);
+    }
+
+    if (user.role === 'client' && user.status === 'pending') {
+      return fail(res, 'Your account registration is currently Pending Approval from your Reseller Agency / Admin.', 403);
+    }
+    if (user.role === 'client' && user.status === 'rejected') {
+      return fail(res, 'Your account registration has been Rejected by your Reseller Agency / Admin.', 403);
     }
 
     const accessToken = signAccess(user._id);
@@ -89,7 +139,15 @@ exports.login = async (req, res) => {
     setRefreshCookie(res, refreshToken);
 
 
-    return success(res, { user: sanitizeUser(user), accessToken }, 'Logged in');
+    const u = sanitizeUser(user);
+    if (user.role === 'client') {
+      const agent = await AIAgent.findOne({ userId: user._id });
+      u.aiAgentActive = Boolean(agent && agent.externalAgentId);
+    } else {
+      u.aiAgentActive = true;
+    }
+
+    return success(res, { user: u, accessToken }, 'Logged in');
   } catch (e) {
     return fail(res, e.message || 'Login failed', 500);
   }
@@ -108,7 +166,14 @@ exports.logout = async (req, res) => {
 exports.me = async (req, res) => {
   try {
     const user = await User.findById(req.user._id);
-    return success(res, { user: sanitizeUser(user) }, 'Profile');
+    const u = sanitizeUser(user);
+    if (user.role === 'client') {
+      const agent = await AIAgent.findOne({ userId: user._id });
+      u.aiAgentActive = Boolean(agent && agent.externalAgentId);
+    } else {
+      u.aiAgentActive = true;
+    }
+    return success(res, { user: u }, 'Profile');
   } catch (e) {
     return fail(res, e.message || 'Failed to load user', 500);
   }
@@ -194,6 +259,34 @@ exports.getAIAgentId = async (req, res) => {
     return success(res, { agentId: mapping ? mapping.externalAgentId : '' }, 'AI Agent ID');
   } catch (e) {
     return fail(res, e.message || 'Failed to get AI Agent ID', 500);
+  }
+};
+
+exports.impersonate = async (req, res) => {
+  try {
+    const { targetUserId } = req.body;
+    if (!targetUserId) return fail(res, 'Target user ID is required', 400);
+
+    const targetUser = await User.findById(targetUserId);
+    if (!targetUser) return fail(res, 'Target user not found', 404);
+
+    if (req.user.role === 'superadmin') {
+      // Superadmin has global access to all admins and clients
+    } else if (req.user.role === 'admin') {
+      if (String(targetUser.parentAdmin) !== String(req.user._id) || targetUser.role !== 'client') {
+        return fail(res, 'Access denied: You can only access client accounts under your agency', 403);
+      }
+    } else {
+      return fail(res, 'Access denied: Insufficient privileges', 403);
+    }
+
+    const accessToken = signAccess(targetUser._id);
+    return success(res, {
+      accessToken,
+      user: sanitizeUser(targetUser),
+    }, `Now viewing as ${targetUser.name}`);
+  } catch (e) {
+    return fail(res, e.message || 'Failed to switch workspace', 500);
   }
 };
 

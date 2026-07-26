@@ -19,6 +19,8 @@ const botRoutes = require('./routes/bot.routes');
 const inboxRoutes = require('./routes/inbox.routes');
 const analyticsRoutes = require('./routes/analytics.routes');
 const webhookRoutes = require('./routes/webhook.routes');
+const superadminRoutes = require('./routes/superadmin.routes');
+const adminRoutes = require('./routes/admin.routes');
 const { protect } = require('./middleware/auth.middleware');
 const authController = require('./controllers/auth.controller');
 
@@ -58,6 +60,8 @@ app.use('/api/bot', botRoutes);
 app.use('/api/inbox', inboxRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/webhook', webhookRoutes);
+app.use('/api/superadmin', superadminRoutes);
+app.use('/api/admin', adminRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ success: true, data: { ok: true }, message: 'OK' });
@@ -68,10 +72,50 @@ app.use(errorHandler);
 
 const PORT = Number(process.env.PORT) || 5000;
 
+async function syncSuperAdmin() {
+  try {
+    require('dotenv').config({ override: true });
+    const email = (process.env.SUPER_ADMIN_EMAIL || process.env.SUPERADMIN_EMAIL || 'superadmin@gmail.com').toLowerCase().trim();
+    const password = process.env.SUPER_ADMIN_PASSWORD || process.env.SUPERADMIN_PASSWORD || 'vijaywiz@123';
+    const name = process.env.SUPER_ADMIN_NAME || process.env.SUPERADMIN_NAME || 'Vijay Wiz';
+
+    const User = require('./models/User');
+    let user = await User.findOne({ role: 'superadmin' }).select('+password');
+    if (!user) {
+      user = await User.findOne({ email }).select('+password');
+    }
+    if (!user) {
+      user = new User({
+        name,
+        email,
+        password,
+        role: 'superadmin',
+        plan: 'enterprise',
+        isVerified: true
+      });
+      await user.save();
+      info(`👑 Created Super Admin from .env: ${email}`);
+    } else {
+      let changed = false;
+      if (user.email !== email) { user.email = email; changed = true; }
+      if (user.name !== name) { user.name = name; changed = true; }
+      if (!(await user.comparePassword(password))) { user.password = password; changed = true; }
+      if (user.role !== 'superadmin') { user.role = 'superadmin'; changed = true; }
+      if (changed) {
+        await user.save();
+        info(`👑 Synchronized Super Admin from .env: ${email}`);
+      }
+    }
+  } catch (err) {
+    error('Error syncing Super Admin from .env:', { reason: err.message });
+  }
+}
+
 async function bootstrap() {
   try {
     validateEnv();
     await connectDB();
+    await syncSuperAdmin();
     server.on('error', (e) => {
       if (e.code === 'EADDRINUSE') {
         error(`Port ${PORT} already in use. Kill the process and retry.`);

@@ -22,4 +22,13 @@ const protect = async (req, res, next) => {
   }
 };
 
-module.exports = { protect };
+const authorizeRoles = (...roles) => {
+  return (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return fail(res, 'Access denied: Insufficient permissions', 403);
+    }
+    next();
+  };
+};
+
+module.exports = { protect, authorizeRoles };

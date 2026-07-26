@@ -15,7 +15,26 @@ const userSchema = new mongoose.Schema(
       enum: ['free', 'starter', 'pro', 'enterprise'],
       default: 'free',
     },
+    role: {
+      type: String,
+      enum: ['superadmin', 'admin', 'client'],
+      default: 'client',
+    },
+    parentAdmin: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    adminLimits: {
+      maxClients: { type: Number, default: 20 },
+      maxMessages: { type: Number, default: 100000 },
+    },
     isVerified: { type: Boolean, default: false },
+    status: {
+      type: String,
+      enum: ['pending', 'active', 'rejected'],
+      default: 'active',
+    },
     refreshToken: { type: String, default: '', select: false },
   },
   { timestamps: true }

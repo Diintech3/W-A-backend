@@ -9,5 +9,6 @@ router.post('/refresh', auth.refresh);
 router.post('/reset-password', auth.resetPassword);
 router.post('/logout', protect, auth.logout);
 router.get('/me', protect, auth.me);
+router.post('/impersonate', protect, auth.impersonate);
 
 module.exports = router;
