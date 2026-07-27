@@ -6,7 +6,8 @@ const { success, fail } = require('../utils/apiResponse');
 
 exports.getStats = async (req, res) => {
   try {
-    const clients = await User.find({ parentAdmin: req.user._id, role: 'client' }).select('_id');
+    const clientFilter = req.user.role === 'superadmin' ? { role: 'client' } : { parentAdmin: req.user._id, role: 'client' };
+    const clients = await User.find(clientFilter).select('_id');
     const clientIds = clients.map((c) => c._id);
 
     const totalClients = clients.length;
@@ -26,14 +27,17 @@ exports.getStats = async (req, res) => {
 
 exports.listClients = async (req, res) => {
   try {
-    const clients = await User.find({
-      role: 'client',
-      $or: [
-        { parentAdmin: req.user._id },
-        { parentAdmin: null, status: 'pending' },
-        { parentAdmin: { $exists: false }, status: 'pending' }
-      ]
-    })
+    const filter = req.user.role === 'superadmin' 
+      ? { role: 'client' } 
+      : {
+          role: 'client',
+          $or: [
+            { parentAdmin: req.user._id },
+            { parentAdmin: null, status: 'pending' },
+            { parentAdmin: { $exists: false }, status: 'pending' }
+          ]
+        };
+    const clients = await User.find(filter)
       .select('-password -refreshToken')
       .sort({ createdAt: -1 });
 
@@ -99,15 +103,18 @@ exports.updateClient = async (req, res) => {
     const { id } = req.params;
     const { name, businessName, phone, plan, isVerified, status, aiAgentId, whatsappPhoneNumberId, whatsappAccessToken } = req.body;
 
-    const client = await User.findOne({
-      _id: id,
-      role: 'client',
-      $or: [
-        { parentAdmin: req.user._id },
-        { parentAdmin: null },
-        { parentAdmin: { $exists: false } }
-      ]
-    });
+    const filter = req.user.role === 'superadmin'
+      ? { _id: id, role: 'client' }
+      : {
+          _id: id,
+          role: 'client',
+          $or: [
+            { parentAdmin: req.user._id },
+            { parentAdmin: null },
+            { parentAdmin: { $exists: false } }
+          ]
+        };
+    const client = await User.findOne(filter);
     if (!client) return fail(res, 'Client not found or not accessible by you', 404);
 
     // If client was unassigned, claim this client for this admin agency upon edit/approval
@@ -157,15 +164,18 @@ exports.updateClient = async (req, res) => {
 exports.deleteClient = async (req, res) => {
   try {
     const { id } = req.params;
-    const client = await User.findOneAndDelete({
-      _id: id,
-      role: 'client',
-      $or: [
-        { parentAdmin: req.user._id },
-        { parentAdmin: null },
-        { parentAdmin: { $exists: false } }
-      ]
-    });
+    const filter = req.user.role === 'superadmin'
+      ? { _id: id, role: 'client' }
+      : {
+          _id: id,
+          role: 'client',
+          $or: [
+            { parentAdmin: req.user._id },
+            { parentAdmin: null },
+            { parentAdmin: { $exists: false } }
+          ]
+        };
+    const client = await User.findOneAndDelete(filter);
     if (!client) return fail(res, 'Client not found or not accessible by you', 404);
 
     return success(res, null, 'Client deleted successfully');

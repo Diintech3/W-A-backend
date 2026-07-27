@@ -80,7 +80,7 @@ async function sendNodeResponse(userId, customerPhone, node, convId) {
 async function sendExternalAgentReply(userId, conv, textBody) {
   const fs = require('fs');
   const path = require('path');
-  const logPath = 'd:\\jan2026\\What\'sai\\W-A-backend\\debug_webhook.log';
+  const logPath = path.join(__dirname, '../debug_webhook.log');
   
   function logDebug(msg) {
     const timestamp = new Date().toISOString();
@@ -334,7 +334,11 @@ exports.receiveWebhook = async (req, res) => {
         const user = await User.findOne({ whatsappPhoneNumberId: phoneNumberId }).select(
           '+whatsappAccessToken'
         );
-        if (!user) continue;
+        if (!user) {
+          console.log(`[Webhook] No user found for whatsappPhoneNumberId: ${phoneNumberId}`);
+          continue;
+        }
+        console.log(`[Webhook] Message received for User: "${user.name}" (${user.email}) | ID: ${user._id} | PhoneID: ${phoneNumberId}`);
 
         if (value.messages) await handleInboundMessage(user, value);
         if (value.statuses) await handleStatusUpdate(user, value);
