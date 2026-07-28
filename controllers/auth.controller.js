@@ -219,14 +219,19 @@ exports.resetPassword = async (req, res) => {
 
 exports.connectWhatsApp = async (req, res) => {
   try {
-    const { whatsappPhoneNumberId, whatsappAccessToken } = req.body;
+    const { whatsappPhoneNumberId, whatsappAccessToken, whatsappWabaId } = req.body;
     if (!whatsappPhoneNumberId || !whatsappAccessToken) {
       return fail(res, 'Phone Number ID and Access Token are required');
     }
-    await User.findByIdAndUpdate(req.user._id, {
+    const updatePayload = {
       whatsappPhoneNumberId: String(whatsappPhoneNumberId).trim(),
       whatsappAccessToken: String(whatsappAccessToken).trim(),
-    });
+    };
+    // WABA ID optional hai — agar diya ho to save karo
+    if (whatsappWabaId && String(whatsappWabaId).trim()) {
+      updatePayload.whatsappWabaId = String(whatsappWabaId).trim();
+    }
+    await User.findByIdAndUpdate(req.user._id, updatePayload);
     const user = await User.findById(req.user._id);
     return success(res, { user: sanitizeUser(user) }, 'WhatsApp connected');
   } catch (e) {

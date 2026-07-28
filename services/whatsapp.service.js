@@ -149,6 +149,135 @@ async function markMessageRead(userId, messageId) {
   return data;
 }
 
+/**
+ * Meta Graph API se user ke WABA ke saare templates fetch karo
+ * Returns array of template objects from Meta
+ */
+async function fetchMetaTemplates(userId) {
+  const user = await User.findById(userId).select('+whatsappAccessToken');
+
+  // Token: user DB se, warna .env fallback
+  const token = user?.whatsappAccessToken || process.env.WHATSAPP_ACCESS_TOKEN;
+  if (!token) {
+    const err = new Error('WhatsApp Access Token not configured. Please connect WhatsApp first in Settings.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // WABA ID: user ke DB se, warna .env fallback
+  const wabaId = user?.whatsappWabaId || process.env.WABA_ID || process.env.WHATSAPP_WABA_ID;
+  if (!wabaId) {
+    const err = new Error('WhatsApp Business Account ID (WABA_ID) not configured. Add it in Settings or .env file.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const version = apiVersion();
+  const url = `https://graph.facebook.com/${version}/${wabaId}/message_templates`;
+
+  const { data } = await axios.get(url, {
+    params: { limit: 250, fields: 'name,status,language,category,components' },
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  return data.data || [];
+}
+
+/**
+ * Ek specific template name ko Meta se verify karo
+ * Returns { found, status, components, language } 
+ */
+async function verifyMetaTemplate(userId, templateName) {
+  const templates = await fetchMetaTemplates(userId);
+  const match = templates.find(
+    (t) => t.name.toLowerCase() === String(templateName).toLowerCase().trim()
+  );
+  if (!match) {
+    return { found: false, status: null, components: [], language: null };
+  }
+  return {
+    found: true,
+    status: match.status, // 'APPROVED' | 'PENDING' | 'REJECTED' | 'DISABLED'
+    language: match.language,
+    category: match.category,
+    components: match.components || [],
+  };
+}
+
+/**
+ * Meta WABA par directly naya template CREATE karo
+ * @param {string} adminUserId - admin user ka ID (token + WABA ID ke liye)
+ * @param {object} templateData - { name, category, language, bodyText, headerText, footerText, variables }
+ * Returns Meta API response with template ID
+ */
+async function createMetaTemplate(adminUserId, templateData) {
+  const user = await User.findById(adminUserId).select('+whatsappAccessToken');
+  const token = user?.whatsappAccessToken || process.env.WHATSAPP_ACCESS_TOKEN;
+  if (!token) {
+    const err = new Error('WhatsApp Access Token not configured.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const wabaId = user?.whatsappWabaId || process.env.WABA_ID || process.env.WHATSAPP_WABA_ID;
+  if (!wabaId) {
+    const err = new Error('WABA_ID not configured. Add it in Settings.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const { name, category, language, bodyText, headerText, footerText, headerVariables, bodyVariables } = templateData;
+
+  // Components build karo
+  const components = [];
+
+  if (headerText && headerText.trim()) {
+    const headerComponent = { type: 'HEADER', format: 'TEXT', text: headerText.trim() };
+    if (headerVariables && headerVariables.length > 0) {
+      headerComponent.example = { header_text: headerVariables };
+    }
+    components.push(headerComponent);
+  }
+
+  // Body component (required)
+  const bodyComponent = { type: 'BODY', text: bodyText };
+  // Agar variables hain to example add karo
+  if (bodyVariables && bodyVariables.length > 0) {
+    bodyComponent.example = {
+      body_text: [bodyVariables],
+    };
+  }
+  components.push(bodyComponent);
+
+  if (footerText && footerText.trim()) {
+    components.push({ type: 'FOOTER', text: footerText.trim() });
+  }
+
+  const version = apiVersion();
+  const url = `https://graph.facebook.com/${version}/${wabaId}/message_templates`;
+
+  const payload = {
+    name: String(name).toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''),
+    category: category || 'MARKETING',
+    language: language || 'en',
+    components,
+  };
+
+  const { data } = await axios.post(url, payload, {
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  });
+
+  return data; // { id, status } — Meta ka response
+}
+
+/**
+ * Ek template ka latest Meta status refresh karo by name
+ */
+async function refreshTemplateStatus(adminUserId, templateName) {
+  const result = await verifyMetaTemplate(adminUserId, templateName);
+  return result;
+}
+
 module.exports = {
   sendTextMessage,
   sendTemplateMessage,
@@ -156,4 +285,8 @@ module.exports = {
   sendInteractiveMessage,
   markMessageRead,
   getCreds,
+  fetchMetaTemplates,
+  verifyMetaTemplate,
+  createMetaTemplate,
+  refreshTemplateStatus,
 };

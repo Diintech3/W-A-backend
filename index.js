@@ -32,8 +32,9 @@ initSocket(server);
 app.use(
   cors({
     origin: (origin, callback) => {
+      const envUrls = process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',').map(s => s.trim()) : [];
       const allowed = [
-        process.env.CLIENT_URL,
+        ...envUrls,
         'http://localhost:5173',
         'http://localhost:5174',
         'http://localhost:5175',

@@ -9,6 +9,7 @@ const userSchema = new mongoose.Schema(
     businessName: { type: String, default: '', trim: true },
     phone: { type: String, default: '' },
     whatsappPhoneNumberId: { type: String, default: '' },
+    whatsappWabaId: { type: String, default: '' },
     whatsappAccessToken: { type: String, default: '', select: false },
     plan: {
       type: String,
