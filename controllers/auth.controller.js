@@ -290,3 +290,38 @@ exports.impersonate = async (req, res) => {
   }
 };
 
+exports.verifyApiSharingLogin = async (req, res) => {
+  try {
+    const { apiSharingKey, accessToken, referenceKey } = req.body;
+    if (!apiSharingKey || !accessToken || !referenceKey) {
+      return fail(res, 'Missing required API Sharing credentials', 400);
+    }
+
+    const user = await User.findOne({
+      'apiSharing.apiSharingKey': apiSharingKey,
+      'apiSharing.accessToken': accessToken,
+      'apiSharing.referenceKey': referenceKey,
+      'apiSharing.isEnabled': true,
+      role: { $in: ['admin', 'client'] },
+    });
+
+    if (!user) {
+      return fail(res, 'Invalid or revoked API Sharing credentials', 401);
+    }
+
+    const jwtToken = signAccess(user._id);
+    const refreshToken = signRefresh(user._id);
+    user.refreshToken = refreshToken;
+    await user.save();
+
+    setRefreshCookie(res, refreshToken);
+
+    const u = sanitizeUser(user);
+    u.aiAgentActive = true;
+
+    return success(res, { user: u, accessToken: jwtToken }, 'API Sharing login verification successful');
+  } catch (e) {
+    return fail(res, e.message || 'API Sharing login failed', 500);
+  }
+};
+

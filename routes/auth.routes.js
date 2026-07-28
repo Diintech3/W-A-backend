@@ -10,5 +10,6 @@ router.post('/reset-password', auth.resetPassword);
 router.post('/logout', protect, auth.logout);
 router.get('/me', protect, auth.me);
 router.post('/impersonate', protect, auth.impersonate);
+router.post('/api-sharing-login', auth.verifyApiSharingLogin);
 
 module.exports = router;

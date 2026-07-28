@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ override: true });
 const http = require('http');
 const express = require('express');
 const cors = require('cors');
@@ -35,6 +35,8 @@ app.use(
       const allowed = [
         process.env.CLIENT_URL,
         'http://localhost:5173',
+        'http://localhost:5174',
+        'http://localhost:5175',
       ].map((u) => u?.replace(/\/$/, '')).filter(Boolean)
       if (!origin || allowed.includes(origin.replace(/\/$/, ''))) {
         callback(null, true)
@@ -70,7 +72,7 @@ app.get('/api/health', (req, res) => {
 app.use(notFound);
 app.use(errorHandler);
 
-const PORT = Number(process.env.PORT) || 5000;
+const PORT = 5005;
 
 async function syncSuperAdmin() {
   try {

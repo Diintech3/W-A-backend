@@ -36,6 +36,13 @@ const userSchema = new mongoose.Schema(
       default: 'active',
     },
     refreshToken: { type: String, default: '', select: false },
+    apiSharing: {
+      isEnabled: { type: Boolean, default: false },
+      apiSharingKey: { type: String, default: '' },
+      accessToken: { type: String, default: '' },
+      referenceKey: { type: String, default: '' },
+      generatedAt: { type: Date, default: null },
+    },
   },
   { timestamps: true }
 );

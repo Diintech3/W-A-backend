@@ -11,5 +11,7 @@ router.get('/clients', adminCtrl.listClients);
 router.post('/clients', adminCtrl.createClient);
 router.put('/clients/:id', adminCtrl.updateClient);
 router.delete('/clients/:id', adminCtrl.deleteClient);
+router.post('/clients/:id/api-sharing', adminCtrl.generateClientApiSharing);
+router.delete('/clients/:id/api-sharing', adminCtrl.revokeClientApiSharing);
 
 module.exports = router;

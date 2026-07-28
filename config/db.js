@@ -10,12 +10,17 @@ const connectDB = async () => {
     });
 
     mongoose.connection.on('disconnected', () => {
-      error('MongoDB disconnected! Attempting to reconnect...');
+      // Log as info instead of error during idle socket rotation
+      info('MongoDB connection rotating / reconnecting...');
     });
 
     await mongoose.connect(uri, {
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000,
+      serverSelectionTimeoutMS: 10000,
+      maxPoolSize: 20,
+      minPoolSize: 2,
+      maxIdleTimeMS: 60000,
+      heartbeatFrequencyMS: 10000,
+      retryWrites: true,
     });
     info('MongoDB connected successfully');
   } catch (err) {

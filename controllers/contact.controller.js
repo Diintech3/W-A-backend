@@ -49,6 +49,7 @@ exports.importContacts = async (req, res) => {
         skipped.push({ row, reason: 'Invalid phone' });
         continue;
       }
+      const targetGroup = req.body.groupId || req.body.group;
       try {
         const c = await Contact.create({
           userId: req.user._id,
@@ -56,7 +57,7 @@ exports.importContacts = async (req, res) => {
           phone: norm,
           email: String(emailRaw).trim(),
           tags: [],
-          group: [],
+          group: targetGroup ? [targetGroup] : [],
           optedOut: false,
         });
         created.push(c);
@@ -162,7 +163,13 @@ exports.createGroup = async (req, res) => {
 exports.listGroups = async (req, res) => {
   try {
     const groups = await ContactGroup.find({ userId: req.user._id }).sort({ name: 1 });
-    return success(res, { groups }, 'Groups');
+    const groupsWithCount = await Promise.all(
+      groups.map(async (g) => {
+        const count = await Contact.countDocuments({ userId: req.user._id, group: g._id });
+        return { ...g.toObject(), contactCount: count };
+      })
+    );
+    return success(res, { groups: groupsWithCount }, 'Groups');
   } catch (e) {
     return fail(res, e.message || 'Failed to list groups', 500);
   }

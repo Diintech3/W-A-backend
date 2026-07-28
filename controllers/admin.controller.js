@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const User = require('../models/User');
 const Campaign = require('../models/Campaign');
 const Message = require('../models/Message');
@@ -181,5 +182,81 @@ exports.deleteClient = async (req, res) => {
     return success(res, null, 'Client deleted successfully');
   } catch (e) {
     return fail(res, e.message || 'Failed to delete client', 500);
+  }
+};
+
+exports.generateClientApiSharing = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const filter = req.user.role === 'superadmin'
+      ? { _id: id, role: 'client' }
+      : {
+          _id: id,
+          role: 'client',
+          $or: [
+            { parentAdmin: req.user._id },
+            { parentAdmin: null },
+            { parentAdmin: { $exists: false } }
+          ]
+        };
+    const client = await User.findOne(filter);
+    if (!client) return fail(res, 'Client not found or not accessible by you', 404);
+
+    const apiSharingKey = 'wa_share_' + crypto.randomBytes(24).toString('hex');
+    const accessToken = 'wa_token_' + crypto.randomBytes(32).toString('hex');
+    const referenceKey = 'wa_ref_' + crypto.randomBytes(16).toString('hex');
+
+    client.apiSharing = {
+      isEnabled: true,
+      apiSharingKey,
+      accessToken,
+      referenceKey,
+      generatedAt: new Date(),
+    };
+
+    await client.save();
+
+    return success(res, {
+      clientId: client.email,
+      apiSharingKey,
+      accessToken,
+      referenceKey,
+      baseUrl: process.env.CLIENT_URL || 'http://localhost:5173',
+    }, 'Client API Sharing credentials generated successfully');
+  } catch (e) {
+    return fail(res, e.message || 'Failed to generate Client API Sharing credentials', 500);
+  }
+};
+
+exports.revokeClientApiSharing = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const filter = req.user.role === 'superadmin'
+      ? { _id: id, role: 'client' }
+      : {
+          _id: id,
+          role: 'client',
+          $or: [
+            { parentAdmin: req.user._id },
+            { parentAdmin: null },
+            { parentAdmin: { $exists: false } }
+          ]
+        };
+    const client = await User.findOne(filter);
+    if (!client) return fail(res, 'Client not found or not accessible by you', 404);
+
+    client.apiSharing = {
+      isEnabled: false,
+      apiSharingKey: '',
+      accessToken: '',
+      referenceKey: '',
+      generatedAt: null,
+    };
+
+    await client.save();
+
+    return success(res, null, 'Client API Sharing access revoked successfully');
+  } catch (e) {
+    return fail(res, e.message || 'Failed to revoke Client API Sharing credentials', 500);
   }
 };
