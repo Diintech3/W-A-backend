@@ -32,24 +32,60 @@ initSocket(server);
 app.use(
   cors({
     origin: (origin, callback) => {
-      const envUrls = process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',').map(s => s.trim()) : [];
-      const allowed = [
-        ...envUrls,
-        'http://localhost:5173',
-        'http://localhost:5174',
-        'http://localhost:5175',
-      ].map((u) => u?.replace(/\/$/, '')).filter(Boolean)
-      if (!origin || allowed.includes(origin.replace(/\/$/, ''))) {
-        callback(null, true)
-      } else {
-        callback(new Error('Not allowed by CORS'))
-      }
+      // Dynamic CORS: Allow the origin so that the request can proceed to the API Key middleware
+      // We reflect the origin back to allow credentials (cookies) to work for authorized clients
+      callback(null, origin || true);
     },
     credentials: true,
   })
 );
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
+
+// Global API Key Security Middleware
+app.use('/api', async (req, res, next) => {
+  // Allow preflight requests
+  if (req.method === 'OPTIONS') return next();
+  
+  // Exclude webhooks (called by Meta/WhatsApp)
+  if (req.path.startsWith('/webhook')) return next();
+  
+  // Exclude health check
+  if (req.path.startsWith('/health')) return next();
+
+  // Exclude API Sharing Login (used by external apps to get initial token)
+  if (req.path === '/auth/api-sharing-login') return next();
+
+  const providedKey = req.headers['x-api-key'];
+
+  // 1. Check if it's the master internal key (used by the core W-A-frontend SaaS)
+  if (providedKey === (process.env.VALID_API_KEYS || 'kasana-ai-super-secret-key-2026')) {
+    return next();
+  }
+
+  // 2. Check if an API key is provided at all
+  if (!providedKey) {
+    return res.status(403).json({ success: false, message: 'Forbidden: Missing API Key' });
+  }
+
+  // 3. Dynamic Database Check for external clients (API Sharing)
+  try {
+    const User = require('./models/User');
+    const userExists = await User.exists({ 
+      'apiSharing.apiSharingKey': providedKey, 
+      'apiSharing.isEnabled': true 
+    });
+
+    if (userExists) {
+      return next();
+    } else {
+      return res.status(403).json({ success: false, message: 'Forbidden: Invalid API Sharing Key' });
+    }
+  } catch (err) {
+    console.error('API Key DB Error:', err);
+    return res.status(500).json({ success: false, message: 'Internal Server Error' });
+  }
+});
 
 app.use('/api/auth', authRoutes);
 app.post('/api/whatsapp/connect', protect, authController.connectWhatsApp);
