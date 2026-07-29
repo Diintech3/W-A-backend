@@ -41,7 +41,10 @@ async function runCampaignSendJob(campaignId, userId) {
 
   if (campaign.status !== 'running') return;
 
-  const template = await Template.findOne({ _id: campaign.template, userId });
+  const template = await Template.findOne({
+    _id: campaign.template,
+    $or: [{ userId }, { assignedTo: userId }],
+  });
   if (!template) {
     campaign.status = 'failed';
     await campaign.save();

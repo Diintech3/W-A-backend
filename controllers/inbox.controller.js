@@ -69,6 +69,7 @@ exports.reply = async (req, res) => {
     conv.lastMessage = text;
     conv.lastMessageAt = new Date();
     conv.botContext = { flowId: null, currentNodeId: '', awaitingMenu: false };
+    conv.isAIPaused = true; // Auto-pause AI when human replies
     await conv.save();
 
     emitToUser(String(req.user._id), 'inbox:newMessage', {
@@ -98,5 +99,22 @@ exports.assign = async (req, res) => {
     return success(res, { conversation: conv }, 'Assignment updated');
   } catch (e) {
     return fail(res, e.message || 'Assign failed', 500);
+  }
+};
+
+exports.toggleAiState = async (req, res) => {
+  try {
+    const { isAIPaused } = req.body;
+    const conv = await Conversation.findOneAndUpdate(
+      { _id: req.params.id, userId: req.user._id },
+      { isAIPaused: Boolean(isAIPaused) },
+      { new: true }
+    );
+    if (!conv) return fail(res, 'Conversation not found', 404);
+
+    emitToUser(String(req.user._id), 'inbox:update', { conversationId: String(conv._id) });
+    return success(res, { conversation: conv }, 'AI state updated');
+  } catch (e) {
+    return fail(res, e.message || 'Toggle AI failed', 500);
   }
 };

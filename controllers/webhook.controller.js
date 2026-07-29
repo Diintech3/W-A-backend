@@ -138,6 +138,13 @@ async function sendExternalAgentReply(userId, conv, textBody) {
 }
 
 async function processBot(userId, conv, textBody) {
+  if (conv.isAIPaused) {
+    const fs = require('fs');
+    const path = require('path');
+    const logPath = path.join(__dirname, '../debug_webhook.log');
+    fs.appendFileSync(logPath, `[${new Date().toISOString()}] AI is paused (Human Mode) for phone ${conv.customerPhone}. Dropping message.\n`);
+    return;
+  }
   let flow;
   try {
     flow = await BotFlow.findOne({ userId });

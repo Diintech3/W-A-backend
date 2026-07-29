@@ -19,6 +19,7 @@ const conversationSchema = new mongoose.Schema(
       currentNodeId: { type: String, default: '' },
       awaitingMenu: { type: Boolean, default: false },
     },
+    isAIPaused: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

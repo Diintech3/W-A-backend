@@ -7,5 +7,6 @@ router.get('/conversations', protect, inbox.listConversations);
 router.get('/conversations/:id/messages', protect, inbox.getMessages);
 router.post('/conversations/:id/reply', protect, inbox.reply);
 router.patch('/conversations/:id/assign', protect, inbox.assign);
+router.put('/conversations/:id/toggle-ai', protect, inbox.toggleAiState);
 
 module.exports = router;
