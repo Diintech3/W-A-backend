@@ -37,7 +37,20 @@ exports.createTemplate = async (req, res) => {
   return fail(res, 'Templates can only be created by Admin.', 403);
 };
 exports.updateTemplate = async (req, res) => {
-  return fail(res, 'Templates can only be edited by Admin.', 403);
+  try {
+    const template = await Template.findOne({ _id: req.params.id, assignedTo: req.user._id });
+    if (!template) return fail(res, 'Template not found', 404);
+
+    if (req.body.sampleParams) {
+      template.sampleParams = req.body.sampleParams;
+      await template.save();
+      return success(res, { template }, 'Template variables updated successfully');
+    }
+    
+    return fail(res, 'You can only edit variables of a template.', 400);
+  } catch(e) {
+    return fail(res, e.message || 'Failed to update template variables', 500);
+  }
 };
 exports.deleteTemplate = async (req, res) => {
   return fail(res, 'Templates can only be deleted by Admin.', 403);
