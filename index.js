@@ -59,10 +59,6 @@ app.use('/api', async (req, res, next) => {
   const providedKey = req.headers['x-api-key'];
 
   // 1. Check if it's the master internal key (used by the core W-A-frontend SaaS)
-  console.log('--- API KEY DEBUG ---');
-  console.log('Provided Key:', providedKey);
-  console.log('Expected Key:', process.env.VALID_API_KEYS || 'whatsai-core-master-secret-key-2026');
-  console.log('---------------------');
   if (providedKey === (process.env.VALID_API_KEYS || 'whatsai-core-master-secret-key-2026')) {
     return next();
   }
