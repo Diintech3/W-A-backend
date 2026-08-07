@@ -439,6 +439,7 @@ async function handleInboundMessage(user, value) {
                 senderName: name || conv.customerName || from,
                 senderPhone: from,
                 photoUrl: uploadRes.url,
+                key: uploadRes.key,
                 caption,
                 isValid: true,
                 whatsappMessageId: m.id,

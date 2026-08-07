@@ -2,6 +2,7 @@ const PhotoshareFolder = require('../models/PhotoshareFolder');
 const PhotosharePhoto = require('../models/PhotosharePhoto');
 const { success, fail } = require('../utils/apiResponse');
 const geminiService = require('../services/gemini.service');
+const r2Service = require('../services/r2.service');
 const crypto = require('crypto');
 
 // Helpers to format YYYY-MM-DD
@@ -112,7 +113,23 @@ exports.getFolderPhotos = async (req, res) => {
     }
 
     const photos = await PhotosharePhoto.find({ folderId: folder._id }).sort({ createdAt: -1 });
-    return success(res, { photos }, 'Photos fetched for client review');
+    
+    const formattedPhotos = await Promise.all(
+      photos.map(async (p) => {
+        const photoObj = p.toObject();
+        const key = photoObj.key || r2Service.getR2KeyFromUrl(photoObj.photoUrl);
+        if (process.env.R2_PUBLIC_URL) {
+          const base = process.env.R2_PUBLIC_URL.replace(/\/$/, '');
+          photoObj.photoUrl = `${base}/${key}`;
+        } else {
+          const presigned = await r2Service.getPresignedUrl(key);
+          if (presigned) photoObj.photoUrl = presigned;
+        }
+        return photoObj;
+      })
+    );
+
+    return success(res, { photos: formattedPhotos }, 'Photos fetched for client review');
   } catch (err) {
     return fail(res, err.message || 'Failed to fetch photos', 500);
   }
@@ -192,7 +209,23 @@ exports.getPublicFolderPhotos = async (req, res) => {
 
     // Only return approved/valid photos to public
     const photos = await PhotosharePhoto.find({ folderId: folder._id, isValid: true }).sort({ createdAt: -1 });
-    return success(res, { photos }, 'Public photos fetched');
+    
+    const formattedPhotos = await Promise.all(
+      photos.map(async (p) => {
+        const photoObj = p.toObject();
+        const key = photoObj.key || r2Service.getR2KeyFromUrl(photoObj.photoUrl);
+        if (process.env.R2_PUBLIC_URL) {
+          const base = process.env.R2_PUBLIC_URL.replace(/\/$/, '');
+          photoObj.photoUrl = `${base}/${key}`;
+        } else {
+          const presigned = await r2Service.getPresignedUrl(key);
+          if (presigned) photoObj.photoUrl = presigned;
+        }
+        return photoObj;
+      })
+    );
+
+    return success(res, { photos: formattedPhotos }, 'Public photos fetched');
   } catch (err) {
     return fail(res, err.message || 'Failed to fetch public photos', 500);
   }
@@ -229,15 +262,30 @@ exports.searchPhotosBySelfie = async (req, res) => {
     // To handle rate limits or performance, we do a Promise.all
     const matchPromises = photos.map(async (photo) => {
       try {
-        const result = await geminiService.matchFaces(selfieBuffer, selfieMime, photo.photoUrl);
+        const key = photo.key || r2Service.getR2KeyFromUrl(photo.photoUrl);
+        let activeUrl = photo.photoUrl;
+        if (process.env.R2_PUBLIC_URL) {
+          const base = process.env.R2_PUBLIC_URL.replace(/\/$/, '');
+          activeUrl = `${base}/${key}`;
+        } else {
+          const presigned = await r2Service.getPresignedUrl(key);
+          if (presigned) activeUrl = presigned;
+        }
+
+        const result = await geminiService.matchFaces(selfieBuffer, selfieMime, activeUrl);
+        
+        const photoObj = photo.toObject();
+        photoObj.photoUrl = activeUrl;
+
         return {
-          photo,
+          photo: photoObj,
           match: result.match,
           confidence: result.confidence
         };
       } catch (e) {
         console.error(`[Selfie Search] Failed matching photo ${photo._id}:`, e.message);
-        return { photo, match: false, confidence: 0 };
+        const photoObj = photo.toObject();
+        return { photo: photoObj, match: false, confidence: 0 };
       }
     });
 

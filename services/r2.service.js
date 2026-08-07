@@ -1,4 +1,5 @@
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const crypto = require('crypto');
 
 function getClient() {
@@ -17,6 +18,38 @@ function getClient() {
 
 function getPublicBaseUrl() {
   return process.env.R2_PUBLIC_URL || process.env.R2_ENDPOINT;
+}
+
+function getR2KeyFromUrl(url) {
+  const bucket = process.env.R2_BUCKET || 'yovoai';
+  const bucketPart = `/${bucket}/`;
+  const index = url.indexOf(bucketPart);
+  if (index !== -1) {
+    return url.slice(index + bucketPart.length);
+  }
+  const pIndex = url.indexOf('/photoshare/');
+  if (pIndex !== -1) {
+    return url.slice(pIndex + 1);
+  }
+  return '';
+}
+
+async function getPresignedUrl(key) {
+  if (!key) return null;
+  try {
+    const bucket = process.env.R2_BUCKET;
+    if (!bucket) throw new Error('R2_BUCKET is missing');
+    const client = getClient();
+    const command = new GetObjectCommand({
+      Bucket: bucket,
+      Key: key,
+    });
+    // Temporary URL valid for 3600 seconds (1 hour)
+    return await getSignedUrl(client, command, { expiresIn: 3600 });
+  } catch (err) {
+    console.error('[R2 Service] Failed to generate presigned URL for key:', key, err);
+    return null;
+  }
 }
 
 function sanitizeExt(name = '', mimetype = '') {
@@ -54,11 +87,15 @@ async function uploadBuffer({ buffer, filename, mimetype, folder = 'uploads' }) 
   );
 
   const base = getPublicBaseUrl().replace(/\/$/, '');
+  const url = process.env.R2_PUBLIC_URL 
+    ? `${base}/${key}` 
+    : `${base}/${bucket}/${key}`;
+
   return {
     key,
     bucket,
-    url: `${base}/${bucket}/${key}`,
+    url,
   };
 }
 
-module.exports = { uploadBuffer };
+module.exports = { uploadBuffer, getPresignedUrl, getR2KeyFromUrl };

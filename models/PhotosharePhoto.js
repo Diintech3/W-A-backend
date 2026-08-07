@@ -6,6 +6,7 @@ const photosharePhotoSchema = new mongoose.Schema(
     senderName: { type: String, default: '' },
     senderPhone: { type: String, required: true },
     photoUrl: { type: String, required: true },
+    key: { type: String, default: '' },
     caption: { type: String, default: '' },
     isValid: { type: Boolean, default: true },
     moderationReason: { type: String, default: '' },
