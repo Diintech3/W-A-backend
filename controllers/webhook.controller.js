@@ -361,8 +361,12 @@ async function handleInboundMessage(user, value) {
         const startCheck = folder.startTime ? now >= folder.startTime : true;
         const endCheck = folder.endTime ? now <= folder.endTime : true;
 
-        if (!folder.isActive || !startCheck || !endCheck) {
-          await whatsapp.sendTextMessage(user._id, from, `❌ Sorry, uploads for "${folder.name}" are currently closed or the time has expired.`);
+        if (!folder.isActive) {
+          await whatsapp.sendTextMessage(user._id, from, `❌ Sorry, the event "${folder.name}" is currently inactive.`);
+        } else if (!startCheck) {
+          await whatsapp.sendTextMessage(user._id, from, `⚠️ The event "${folder.name}" has not started yet! Uploads will open at ${new Date(folder.startTime).toLocaleString()}.`);
+        } else if (!endCheck) {
+          await whatsapp.sendTextMessage(user._id, from, `⚠️ Time is over! Photos are no longer being accepted for event: "${folder.name}".`);
         } else {
           conv.activePhotoshareFolderId = folder._id;
           await conv.save();
@@ -381,7 +385,15 @@ async function handleInboundMessage(user, value) {
         const startCheck = folder.startTime ? now >= folder.startTime : true;
         const endCheck = folder.endTime ? now <= folder.endTime : true;
 
-        if (!folder.isActive || !startCheck || !endCheck) {
+        if (!folder.isActive) {
+          conv.activePhotoshareFolderId = null;
+          await conv.save();
+          await whatsapp.sendTextMessage(user._id, from, `❌ Sorry, the event "${folder.name}" is currently inactive.`);
+          handledByPhotoshare = true;
+        } else if (!startCheck) {
+          await whatsapp.sendTextMessage(user._id, from, `⚠️ The event "${folder.name}" has not started yet! Uploads will open at ${new Date(folder.startTime).toLocaleString()}.`);
+          handledByPhotoshare = true;
+        } else if (!endCheck) {
           conv.activePhotoshareFolderId = null;
           await conv.save();
           await whatsapp.sendTextMessage(user._id, from, `⚠️ Time is over! Photos are no longer being accepted for event: "${folder.name}".`);
