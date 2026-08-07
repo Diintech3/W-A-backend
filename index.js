@@ -177,6 +177,29 @@ async function bootstrap() {
       error('Failed to run photo template migration:', migErr);
     }
 
+    // Force active time settings for testing-1 photoshare folder
+    try {
+      const PhotoshareFolder = require('./models/PhotoshareFolder');
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const future = new Date(Date.now() + 48 * 60 * 60 * 1000);
+      
+      const folderRes = await PhotoshareFolder.updateOne(
+        { linkCode: 'event_e74f6129' },
+        { 
+          $set: { 
+            startTime: yesterday, 
+            endTime: future,
+            isActive: true 
+          } 
+        }
+      );
+      if (folderRes.modifiedCount > 0) {
+        info(`✅ Manually set testing-1 folder times: Start is yesterday, End is +48h.`);
+      }
+    } catch (foldErr) {
+      error('Failed to manually update testing-1 folder times:', foldErr);
+    }
+
     server.on('error', (e) => {
       if (e.code === 'EADDRINUSE') {
         error(`Port ${PORT} already in use. Kill the process and retry.`);
