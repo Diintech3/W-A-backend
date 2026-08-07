@@ -458,7 +458,10 @@ async function handleInboundMessage(user, value) {
               };
               currentVal.count += 1;
 
-              const clientUrl = process.env.CLIENT_URL || 'https://w-a-frontend.vercel.app';
+              let clientUrl = process.env.CLIENT_URL || 'https://w-a-frontend.vercel.app';
+              if (clientUrl.includes('localhost')) {
+                clientUrl = 'https://w-a-frontend.vercel.app';
+              }
               const galleryUrl = `${clientUrl}/gallery/${folder.linkCode}`;
 
               currentVal.timer = setTimeout(async () => {
