@@ -15,6 +15,7 @@ const templateSchema = new mongoose.Schema(
     bodyPreview: { type: String, default: '' },
     headerText: { type: String, default: '' },
     footerText: { type: String, default: '' },
+    headerType: { type: String, default: 'TEXT' }, // 'TEXT' or 'IMAGE'
     parameterFormat: { type: String, default: 'POSITIONAL' },
     sampleParams: [{ key: String, value: String }],
     // Meta se approval status

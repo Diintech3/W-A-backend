@@ -6,6 +6,13 @@ const whatsapp = require('../services/whatsapp.service');
 const { emitToUser } = require('../services/socket.service');
 const ugcService = require('../services/ugc.service');
 const AIAgent = require('../models/AIAgent');
+const mongoose = require('mongoose');
+const PhotoshareFolder = require('../models/PhotoshareFolder');
+const PhotosharePhoto = require('../models/PhotosharePhoto');
+const r2Service = require('../services/r2.service');
+const geminiService = require('../services/gemini.service');
+
+const photoshareDebouncers = new Map();
 
 exports.verifyWebhook = (req, res) => {
   const mode = req.query['hub.mode'];
@@ -248,13 +255,35 @@ async function handleInboundMessage(user, value) {
     const from = m.from;
     const name = value.contacts?.[0]?.profile?.name || '';
     let textBody = '';
-    if (m.type === 'text') textBody = m.text?.body || '';
-    else if (m.type === 'interactive' && m.interactive?.button_reply) {
+    let mediaUrl = '';
+
+    if (m.type === 'text') {
+      textBody = m.text?.body || '';
+    } else if (m.type === 'interactive' && m.interactive?.button_reply) {
       textBody =
         m.interactive.button_reply.title ||
         m.interactive.button_reply.id ||
         '';
-    } else textBody = `[${m.type}]`;
+    } else if (m.type === 'image') {
+      textBody = m.image?.caption || '[image]';
+      try {
+        const mediaId = m.image?.id;
+        if (mediaId) {
+          const downloadRes = await whatsapp.downloadMedia(user._id, mediaId);
+          const uploadRes = await r2Service.uploadBuffer({
+            buffer: downloadRes.buffer,
+            filename: `${mediaId}.jpg`,
+            mimetype: downloadRes.mimeType,
+            folder: `users/${user._id}/chat`
+          });
+          mediaUrl = uploadRes.url;
+        }
+      } catch (err) {
+        console.error('Failed to download/upload regular chatbot image:', err);
+      }
+    } else {
+      textBody = `[${m.type}]`;
+    }
 
     let conv = await Conversation.findOne({ userId: user._id, customerPhone: from });
     if (!conv) {
@@ -282,6 +311,7 @@ async function handleInboundMessage(user, value) {
       to: user.whatsappPhoneNumberId,
       body: textBody,
       type: m.type || 'text',
+      mediaUrl: mediaUrl || '',
       status: 'delivered',
       whatsappMessageId: m.id || '',
     });
@@ -300,7 +330,154 @@ async function handleInboundMessage(user, value) {
       }
     }
 
-    if ((m.type === 'text' || m.type === 'interactive') && textBody && !textBody.startsWith('[')) {
+    // === PHOTOSHARE LOGIC BEGIN ===
+    let handledByPhotoshare = false;
+
+    // Check if the user is sending an image but has no active session
+    if (m.type === 'image' && !conv.activePhotoshareFolderId) {
+      const fallbackFolder = await PhotoshareFolder.findOne({ userId: user._id, isActive: true });
+      if (fallbackFolder) {
+        conv.activePhotoshareFolderId = fallbackFolder._id;
+        await conv.save();
+      }
+    }
+
+    const photoshareMatch = textBody.trim().match(/^(upload|joinevent|uploadevent)_([a-zA-Z0-9_-]+)$/i);
+
+    if (photoshareMatch) {
+      handledByPhotoshare = true;
+      const code = photoshareMatch[2].trim();
+      const folder = await PhotoshareFolder.findOne({
+        $or: [
+          { linkCode: code },
+          { _id: mongoose.isValidObjectId(code) ? code : null }
+        ]
+      });
+
+      if (!folder) {
+        await whatsapp.sendTextMessage(user._id, from, '❌ Oops! Event or folder not found. Please check the QR code or link.');
+      } else {
+        const now = new Date();
+        const startCheck = folder.startTime ? now >= folder.startTime : true;
+        const endCheck = folder.endTime ? now <= folder.endTime : true;
+
+        if (!folder.isActive || !startCheck || !endCheck) {
+          await whatsapp.sendTextMessage(user._id, from, `❌ Sorry, uploads for "${folder.name}" are currently closed or the time has expired.`);
+        } else {
+          conv.activePhotoshareFolderId = folder._id;
+          await conv.save();
+          await whatsapp.sendTextMessage(user._id, from, `🎉 Connected to "${folder.name}"!\n\nPlease send your photos now. You can also write a caption with them. Write 'exit' to stop.`);
+        }
+      }
+    } else if (textBody.trim().toLowerCase() === 'exit' && conv.activePhotoshareFolderId) {
+      handledByPhotoshare = true;
+      conv.activePhotoshareFolderId = null;
+      await conv.save();
+      await whatsapp.sendTextMessage(user._id, from, '👋 Exited photoshare upload session. You can now chat normally.');
+    } else if (conv.activePhotoshareFolderId) {
+      const folder = await PhotoshareFolder.findById(conv.activePhotoshareFolderId);
+      if (folder) {
+        const now = new Date();
+        const startCheck = folder.startTime ? now >= folder.startTime : true;
+        const endCheck = folder.endTime ? now <= folder.endTime : true;
+
+        if (!folder.isActive || !startCheck || !endCheck) {
+          conv.activePhotoshareFolderId = null;
+          await conv.save();
+          await whatsapp.sendTextMessage(user._id, from, `⚠️ Time is over! Photos are no longer being accepted for event: "${folder.name}".`);
+          handledByPhotoshare = true;
+        } else if (m.type === 'image') {
+          handledByPhotoshare = true;
+          const mediaId = m.image.id;
+          const caption = m.image.caption || '';
+
+          try {
+            console.log(`[Webhook Photoshare] Processing photo from ${from} for folder: ${folder.name}`);
+            
+            // Download photo
+            const { buffer, mimeType } = await whatsapp.downloadMedia(user._id, mediaId);
+            
+            // Moderate photo using Gemini
+            const mod = await geminiService.moderateImage(buffer, mimeType);
+            if (!mod.valid) {
+              await whatsapp.sendTextMessage(user._id, from, `⚠️ Photo rejected: ${mod.reason || 'Image is blur or inappropriate.'}`);
+              
+              await PhotosharePhoto.create({
+                folderId: folder._id,
+                senderName: name || conv.customerName || from,
+                senderPhone: from,
+                photoUrl: 'rejected',
+                caption,
+                isValid: false,
+                moderationReason: mod.reason || 'Blur/Inappropriate',
+                whatsappMessageId: m.id,
+              });
+            } else {
+              // Upload photo to R2
+              const uploadRes = await r2Service.uploadBuffer({
+                buffer,
+                filename: `${mediaId}.jpg`,
+                mimetype: mimeType,
+                folder: `photoshare/${folder._id}`
+              });
+
+              // Save in DB
+              const photoDoc = await PhotosharePhoto.create({
+                folderId: folder._id,
+                senderName: name || conv.customerName || from,
+                senderPhone: from,
+                photoUrl: uploadRes.url,
+                caption,
+                isValid: true,
+                whatsappMessageId: m.id,
+              });
+
+              // Send a debounced summary reply
+              const debounceKey = `${user._id}_${from}`;
+              if (photoshareDebouncers.has(debounceKey)) {
+                clearTimeout(photoshareDebouncers.get(debounceKey).timer);
+              }
+
+              const currentVal = photoshareDebouncers.get(debounceKey) || { 
+                count: 0, 
+                folderName: folder.name, 
+                folderLinkCode: folder.linkCode 
+              };
+              currentVal.count += 1;
+
+              const clientUrl = process.env.CLIENT_URL || 'https://w-a-frontend.vercel.app';
+              const galleryUrl = `${clientUrl}/gallery/${folder.linkCode}`;
+
+              currentVal.timer = setTimeout(async () => {
+                try {
+                  const finalCount = currentVal.count;
+                  photoshareDebouncers.delete(debounceKey);
+                  
+                  const msg = `🎉 Received ${finalCount} photo${finalCount > 1 ? 's' : ''}! They have been added to the live gallery wall.\n\n👁️ View the live wall here: ${galleryUrl}`;
+                  await whatsapp.sendTextMessage(user._id, from, msg);
+                } catch (sendErr) {
+                  console.error('Failed to send debounced photoshare reply:', sendErr);
+                }
+              }, 5000);
+
+              photoshareDebouncers.set(debounceKey, currentVal);
+
+              // Emit via socket
+              emitToUser(String(user._id), 'photoshare:newPhoto', {
+                folderId: String(folder._id),
+                photo: photoDoc,
+              });
+            }
+          } catch (error) {
+            console.error('[Webhook Photoshare Error]:', error);
+            await whatsapp.sendTextMessage(user._id, from, '❌ Failed to process and save your photo. Please try again.');
+          }
+        }
+      }
+    }
+    // === PHOTOSHARE LOGIC END ===
+
+    if (!handledByPhotoshare && (m.type === 'text' || m.type === 'interactive') && textBody && !textBody.startsWith('[')) {
       await processBot(user._id, conv, textBody);
     }
   }
@@ -325,6 +502,13 @@ async function handleStatusUpdate(user, value) {
 
 exports.receiveWebhook = async (req, res) => {
   try {
+    const fs = require('fs');
+    const path = require('path');
+    fs.appendFileSync(
+      path.join(__dirname, '../incoming_webhooks.log'),
+      `[${new Date().toISOString()}] webhook received: ${JSON.stringify(req.body)}\n`
+    );
+
     const body = req.body;
     if (body.object !== 'whatsapp_business_account') {
       return res.sendStatus(404);

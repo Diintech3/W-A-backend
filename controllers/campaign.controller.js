@@ -3,6 +3,7 @@ const Contact = require('../models/Contact');
 const Template = require('../models/Template');
 const Message = require('../models/Message');
 const Analytics = require('../models/Analytics');
+const Conversation = require('../models/Conversation');
 const { success, fail } = require('../utils/apiResponse');
 const whatsapp = require('../services/whatsapp.service');
 const { emitToUser } = require('../services/socket.service');
@@ -74,6 +75,30 @@ async function runCampaignSendJob(campaignId, userId) {
   for (let i = 0; i < contacts.length; i++) {
     const contact = contacts[i];
     const phone = contact.phone.replace(/\D/g, '');
+
+    // Auto-link user conversation to photoshare folder if configured
+    if (campaign.photoshareFolderId) {
+      try {
+        let conv = await Conversation.findOne({ userId, customerPhone: phone });
+        if (!conv) {
+          await Conversation.create({
+            userId,
+            customerPhone: phone,
+            customerName: contact.name || '',
+            lastMessage: '[Linked via Campaign]',
+            lastMessageAt: new Date(),
+            activePhotoshareFolderId: campaign.photoshareFolderId,
+            unreadCount: 0,
+          });
+        } else {
+          conv.activePhotoshareFolderId = campaign.photoshareFolderId;
+          await conv.save();
+        }
+      } catch (sessErr) {
+        console.error('Failed to auto-link campaign session:', sessErr);
+      }
+    }
+
     const msgDoc = await Message.create({
       userId,
       campaignId: campaign._id,
@@ -140,7 +165,7 @@ exports.runCampaignSendJob = runCampaignSendJob;
 
 exports.createCampaign = async (req, res) => {
   try {
-    const { name, targetGroup, template, scheduledAt } = req.body;
+    const { name, targetGroup, template, scheduledAt, photoshareFolderId } = req.body;
     if (!name || !targetGroup || !template) {
       return fail(res, 'Name, target group and template are required');
     }
@@ -157,6 +182,7 @@ exports.createCampaign = async (req, res) => {
       name,
       targetGroup,
       template,
+      photoshareFolderId: photoshareFolderId || null,
       status,
       scheduledAt: status === 'scheduled' ? scheduleDate : null,
     });
@@ -193,7 +219,7 @@ exports.getCampaign = async (req, res) => {
 
 exports.updateCampaign = async (req, res) => {
   try {
-    const { name, targetGroup, template, scheduledAt } = req.body;
+    const { name, targetGroup, template, scheduledAt, photoshareFolderId } = req.body;
     const campaign = await Campaign.findOne({ _id: req.params.id, userId: req.user._id });
     if (!campaign) return fail(res, 'Campaign not found', 404);
     if (campaign.status === 'running') return fail(res, 'Cannot edit a running campaign');
@@ -201,6 +227,7 @@ exports.updateCampaign = async (req, res) => {
     if (name !== undefined) campaign.name = name;
     if (targetGroup !== undefined) campaign.targetGroup = targetGroup;
     if (template !== undefined) campaign.template = template;
+    if (photoshareFolderId !== undefined) campaign.photoshareFolderId = photoshareFolderId || null;
     if (scheduledAt !== undefined) {
       if (scheduledAt) {
         const scheduleDate = new Date(scheduledAt);

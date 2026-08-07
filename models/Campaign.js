@@ -6,6 +6,7 @@ const campaignSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     targetGroup: { type: mongoose.Schema.Types.ObjectId, ref: 'ContactGroup', required: true },
     template: { type: mongoose.Schema.Types.ObjectId, ref: 'Template', required: true },
+    photoshareFolderId: { type: mongoose.Schema.Types.ObjectId, ref: 'PhotoshareFolder', default: null },
     status: {
       type: String,
       enum: ['draft', 'scheduled', 'running', 'completed', 'failed'],

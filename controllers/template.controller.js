@@ -210,10 +210,20 @@ exports.adminAssignTemplate = async (req, res) => {
 
     // Meta se verify karo status
     let metaStatus = 'DRAFT';
+    let headerType = 'TEXT';
     try {
       const verification = await verifyMetaTemplate(req.user._id, whatsappTemplateName);
-      if (verification.found) metaStatus = verification.status;
+      if (verification.found) {
+        metaStatus = verification.status;
+        const headerComp = (verification.template?.components || []).find((c) => c.type === 'HEADER');
+        if (headerComp?.format === 'IMAGE') headerType = 'IMAGE';
+      }
     } catch { /* ignore — status draft rahega */ }
+
+    const finalSampleParams = [...(Array.isArray(sampleParams) ? sampleParams : [])];
+    if (headerType === 'IMAGE' && !finalSampleParams.find(p => p.key === 'header_image')) {
+      finalSampleParams.unshift({ key: 'header_image', value: 'https://placehold.co/600x400?text=Upload+Header+Image' });
+    }
 
     const template = await Template.create({
       userId: req.user._id,
@@ -224,7 +234,8 @@ exports.adminAssignTemplate = async (req, res) => {
       languageCode: languageCode || 'en',
       category: category || 'MARKETING',
       bodyPreview: bodyPreview || '',
-      sampleParams: Array.isArray(sampleParams) ? sampleParams : [],
+      headerType,
+      sampleParams: finalSampleParams,
       metaStatus,
     });
 
@@ -277,7 +288,7 @@ exports.adminDeleteTemplate = async (req, res) => {
  */
 exports.adminRefreshStatus = async (req, res) => {
   try {
-    const template = await Template.findOne({ _id: req.params.templateId, createdByAdmin: req.user._id });
+    const template = await Template.findOne({ _id: req.params.templateId });
     if (!template) return fail(res, 'Template not found', 404);
 
     const result = await refreshTemplateStatus(req.user._id, template.whatsappTemplateName);
@@ -299,7 +310,7 @@ exports.adminRefreshStatus = async (req, res) => {
 exports.adminRefreshAllStatus = async (req, res) => {
   try {
     const { clientId } = req.params;
-    const templates = await Template.find({ assignedTo: clientId, createdByAdmin: req.user._id });
+    const templates = await Template.find({ assignedTo: clientId });
     const metaTemplates = await fetchMetaTemplates(req.user._id);
 
     let updated = 0;
@@ -352,21 +363,33 @@ exports.metaSync = async (req, res) => {
     const approved = metaTemplates.filter((t) => t.status === 'APPROVED');
     let created = 0, updated = 0;
     for (const mt of approved) {
+      const headerComp = (mt.components || []).find((c) => c.type === 'HEADER');
+      const hasImageHeader = headerComp?.format === 'IMAGE';
+      const headerText = headerComp?.type === 'HEADER' && headerComp?.format === 'TEXT' ? headerComp.text : '';
+
+      const sampleParams = [];
+      if (hasImageHeader) {
+        sampleParams.push({ key: 'header_image', value: 'https://placehold.co/600x400?text=Upload+Header+Image' });
+      }
+
       const bodyComp = (mt.components || []).find((c) => c.type === 'BODY');
       const bodyText = bodyComp?.text || '';
       const varMatches = bodyText.match(/\{\{(\d+)\}\}/g) || [];
       const uniqueVars = [...new Set(varMatches)];
-      const sampleParams = uniqueVars.map((v) => {
+      uniqueVars.forEach((v) => {
         const num = v.replace(/[{}]/g, '');
-        return { key: num, value: `sample_${num}` };
+        sampleParams.push({ key: num, value: `sample_${num}` });
       });
+
       const displayName = mt.name.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
       const existing = await Template.findOne({ userId: req.user._id, whatsappTemplateName: mt.name, assignedTo: null });
       if (existing) {
         existing.languageCode = mt.language || 'en';
         existing.bodyPreview = bodyText || existing.bodyPreview;
+        existing.headerText = headerText || existing.headerText;
+        existing.headerType = hasImageHeader ? 'IMAGE' : 'TEXT';
         existing.metaStatus = mt.status;
-        if (sampleParams.length && !existing.sampleParams?.length) existing.sampleParams = sampleParams;
+        existing.sampleParams = sampleParams;
         await existing.save();
         updated++;
       } else {
@@ -377,6 +400,8 @@ exports.metaSync = async (req, res) => {
           whatsappTemplateName: mt.name,
           languageCode: mt.language || 'en',
           bodyPreview: bodyText,
+          headerText,
+          headerType: hasImageHeader ? 'IMAGE' : 'TEXT',
           sampleParams,
           metaStatus: mt.status,
         });

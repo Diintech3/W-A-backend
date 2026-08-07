@@ -10,6 +10,7 @@ const messageSchema = new mongoose.Schema(
     to: { type: String, default: '' },
     body: { type: String, default: '' },
     type: { type: String, default: 'text' },
+    mediaUrl: { type: String, default: '' },
     status: {
       type: String,
       enum: ['pending', 'sent', 'delivered', 'read', 'failed'],

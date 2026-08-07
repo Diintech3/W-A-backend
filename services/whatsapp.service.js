@@ -43,25 +43,47 @@ function buildTemplateComponents(params) {
   if (!params || !params.length) {
     return [{ type: 'body', parameters: [] }];
   }
-  const first = params[0];
-  if (typeof first === 'string') {
-    return [
-      {
-        type: 'body',
-        parameters: params.map((text) => ({ type: 'text', text: String(text) })),
-      },
-    ];
-  }
-  return [
-    {
-      type: 'body',
-      parameters: params.map((p) => ({
+
+  const headerParams = [];
+  const bodyParams = [];
+
+  for (const p of params) {
+    const val = typeof p === 'string' ? p : String(p.text ?? p.value ?? p.parameter_name ?? '');
+    
+    // Check if the value is an image link (url ending with image extension or containing r2/s3 bucket details)
+    const isImage = (p.parameter_name === 'header_image' || p.key === 'header_image') ||
+                    /^https?:\/\/.+\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i.test(val) || 
+                    (val.startsWith('http') && (val.includes('r2.cloudflarestorage.com') || val.includes('r2.dev') || val.includes('cloudinary')));
+
+    if (isImage) {
+      headerParams.push({
+        type: 'image',
+        image: { link: val }
+      });
+    } else {
+      bodyParams.push({
         type: 'text',
-        text: String(p.text ?? p.value ?? ''),
-        parameter_name: p.parameter_name || p.key,
-      })),
-    },
-  ];
+        text: val
+      });
+    }
+  }
+
+  const components = [];
+  if (headerParams.length > 0) {
+    components.push({
+      type: 'header',
+      parameters: headerParams
+    });
+  }
+  
+  if (bodyParams.length > 0 || components.length === 0) {
+    components.push({
+      type: 'body',
+      parameters: bodyParams
+    });
+  }
+
+  return components;
 }
 
 async function sendTemplateMessage(userId, to, templateName, languageCode, params) {
@@ -278,6 +300,37 @@ async function refreshTemplateStatus(adminUserId, templateName) {
   return result;
 }
 
+/**
+ * Download media binary from WhatsApp Graph API using media ID
+ */
+async function downloadMedia(userId, mediaId) {
+  const { token } = await getCreds(userId);
+  const version = apiVersion();
+
+  // 1. Fetch media URL from Meta Graph API
+  const metaUrl = `https://graph.facebook.com/${version}/${mediaId}`;
+  const response = await axios.get(metaUrl, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  const downloadUrl = response?.data?.url;
+  const mimeType = response?.data?.mime_type;
+  if (!downloadUrl) {
+    throw new Error('Failed to retrieve media download URL from WhatsApp API.');
+  }
+
+  // 2. Fetch the actual media binary content
+  const mediaResponse = await axios.get(downloadUrl, {
+    headers: { Authorization: `Bearer ${token}` },
+    responseType: 'arraybuffer',
+  });
+
+  return {
+    buffer: Buffer.from(mediaResponse.data),
+    mimeType,
+  };
+}
+
 module.exports = {
   sendTextMessage,
   sendTemplateMessage,
@@ -289,4 +342,5 @@ module.exports = {
   verifyMetaTemplate,
   createMetaTemplate,
   refreshTemplateStatus,
+  downloadMedia,
 };

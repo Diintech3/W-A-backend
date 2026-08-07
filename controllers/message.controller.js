@@ -52,6 +52,7 @@ exports.sendMediaMessage = async (req, res) => {
       to: String(to).replace(/\D/g, ''),
       body: caption || `[${mediaType}] ${uploaded.url}`,
       type: mediaType,
+      mediaUrl: uploaded.url,
       status: 'sent',
       whatsappMessageId: response?.messages?.[0]?.id || '',
     });

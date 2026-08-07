@@ -21,6 +21,7 @@ const analyticsRoutes = require('./routes/analytics.routes');
 const webhookRoutes = require('./routes/webhook.routes');
 const superadminRoutes = require('./routes/superadmin.routes');
 const adminRoutes = require('./routes/admin.routes');
+const photoshareRoutes = require('./routes/photoshare.routes');
 const { protect } = require('./middleware/auth.middleware');
 const authController = require('./controllers/auth.controller');
 
@@ -101,6 +102,7 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/webhook', webhookRoutes);
 app.use('/api/superadmin', superadminRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/photoshare', photoshareRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ success: true, data: { ok: true }, message: 'OK' });
@@ -155,6 +157,26 @@ async function bootstrap() {
     validateEnv();
     await connectDB();
     await syncSuperAdmin();
+
+    // One-time migration for existing photo templates
+    try {
+      const Template = require('./models/Template');
+      const updated = await Template.updateMany(
+        { whatsappTemplateName: 'photo', $or: [{ headerType: { $exists: false } }, { headerType: 'TEXT' }] },
+        { 
+          $set: { 
+            headerType: 'IMAGE',
+            sampleParams: [{ key: 'header_image', value: 'https://placehold.co/600x400?text=Upload+Header+Image' }]
+          } 
+        }
+      );
+      if (updated.modifiedCount > 0) {
+        info(`✅ Migrated ${updated.modifiedCount} existing photo templates to IMAGE headerType.`);
+      }
+    } catch (migErr) {
+      error('Failed to run photo template migration:', migErr);
+    }
+
     server.on('error', (e) => {
       if (e.code === 'EADDRINUSE') {
         error(`Port ${PORT} already in use. Kill the process and retry.`);
