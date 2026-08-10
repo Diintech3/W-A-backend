@@ -24,6 +24,7 @@ router.post('/admin/clients/:clientId/refresh-all', protect, adminOnly, t.adminR
 router.patch('/admin/:templateId', protect, adminOnly, t.adminUpdateTemplate);
 router.delete('/admin/:templateId', protect, adminOnly, t.adminDeleteTemplate);
 router.post('/admin/:templateId/refresh-status', protect, adminOnly, t.adminRefreshStatus);
+router.post('/admin/:templateId/approve-and-submit', protect, adminOnly, t.adminApproveAndSubmit);
 
 // ─── Client: apni assigned templates ─────────────────────────────────────────
 router.get('/', protect, t.listTemplates);

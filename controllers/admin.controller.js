@@ -260,3 +260,55 @@ exports.revokeClientApiSharing = async (req, res) => {
     return fail(res, e.message || 'Failed to revoke Client API Sharing credentials', 500);
   }
 };
+
+exports.generateSelfApiSharing = async (req, res) => {
+  try {
+    const admin = await User.findById(req.user._id);
+    if (!admin) return fail(res, 'Admin not found', 404);
+
+    const apiSharingKey = 'wa_share_' + crypto.randomBytes(24).toString('hex');
+    const accessToken = 'wa_token_' + crypto.randomBytes(32).toString('hex');
+    const referenceKey = 'wa_ref_' + crypto.randomBytes(16).toString('hex');
+
+    admin.apiSharing = {
+      isEnabled: true,
+      apiSharingKey,
+      accessToken,
+      referenceKey,
+      generatedAt: new Date(),
+    };
+
+    await admin.save();
+
+    return success(res, {
+      adminId: admin.email,
+      apiSharingKey,
+      accessToken,
+      referenceKey,
+      baseUrl: process.env.CLIENT_URL || 'http://localhost:5173',
+    }, 'Partner API Sharing credentials generated successfully');
+  } catch (e) {
+    return fail(res, e.message || 'Failed to generate Partner API Sharing credentials', 500);
+  }
+};
+
+exports.revokeSelfApiSharing = async (req, res) => {
+  try {
+    const admin = await User.findById(req.user._id);
+    if (!admin) return fail(res, 'Admin not found', 404);
+
+    admin.apiSharing = {
+      isEnabled: false,
+      apiSharingKey: '',
+      accessToken: '',
+      referenceKey: '',
+      generatedAt: null,
+    };
+
+    await admin.save();
+
+    return success(res, null, 'Partner API Sharing access revoked successfully');
+  } catch (e) {
+    return fail(res, e.message || 'Failed to revoke Partner API Sharing credentials', 500);
+  }
+};

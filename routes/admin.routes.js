@@ -13,5 +13,7 @@ router.put('/clients/:id', adminCtrl.updateClient);
 router.delete('/clients/:id', adminCtrl.deleteClient);
 router.post('/clients/:id/api-sharing', adminCtrl.generateClientApiSharing);
 router.delete('/clients/:id/api-sharing', adminCtrl.revokeClientApiSharing);
+router.post('/self-api-sharing', adminCtrl.generateSelfApiSharing);
+router.delete('/self-api-sharing', adminCtrl.revokeSelfApiSharing);
 
 module.exports = router;

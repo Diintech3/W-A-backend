@@ -32,9 +32,47 @@ exports.getTemplate = async (req, res) => {
   }
 };
 
-// Client ko template create/delete/edit nahi karne dete — sirf admin
 exports.createTemplate = async (req, res) => {
-  return fail(res, 'Templates can only be created by Admin.', 403);
+  try {
+    const { name, category, language, bodyText, headerText, footerText, variables } = req.body;
+    if (!name || !bodyText) {
+      return fail(res, 'Template name and body text are required', 400);
+    }
+
+    const cleanName = String(name).toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+
+    // Check if template exists for client
+    const existing = await Template.findOne({
+      assignedTo: req.user._id,
+      whatsappTemplateName: cleanName
+    });
+    if (existing) {
+      return fail(res, 'Template with this name already exists', 400);
+    }
+
+    // Client templates will be owned by their parent Admin and assigned to this client
+    const template = await Template.create({
+      userId: req.user.parentAdmin || req.user._id, // Owner is parent admin (who holds the Meta API keys)
+      assignedTo: req.user._id,
+      createdByAdmin: null, // null means client requested it
+      name: name.trim(),
+      whatsappTemplateName: cleanName,
+      languageCode: language || 'en',
+      category: category || 'MARKETING',
+      bodyPreview: bodyText,
+      headerText: headerText || '',
+      footerText: footerText || '',
+      sampleParams: (variables || []).map((v, i) => ({
+        key: String(i + 1),
+        value: v.value || v.key || ''
+      })),
+      metaStatus: 'PENDING_ADMIN_APPROVAL'
+    });
+
+    return success(res, { template }, 'Template request submitted to Admin successfully', 201);
+  } catch (e) {
+    return fail(res, e.message || 'Failed to submit template request', 500);
+  }
 };
 exports.updateTemplate = async (req, res) => {
   try {
@@ -53,7 +91,16 @@ exports.updateTemplate = async (req, res) => {
   }
 };
 exports.deleteTemplate = async (req, res) => {
-  return fail(res, 'Templates can only be deleted by Admin.', 403);
+  try {
+    const t = await Template.findOneAndDelete({ 
+      _id: req.params.id, 
+      assignedTo: req.user._id 
+    });
+    if (!t) return fail(res, 'Template not found or not yours to delete', 404);
+    return success(res, null, 'Template deleted successfully');
+  } catch (e) {
+    return fail(res, e.message || 'Delete failed', 500);
+  }
 };
 
 // ─── ADMIN: client ke liye template create/manage ────────────────────────────
@@ -274,9 +321,16 @@ exports.adminUpdateTemplate = async (req, res) => {
  */
 exports.adminDeleteTemplate = async (req, res) => {
   try {
-    const t = await Template.findOneAndDelete({ _id: req.params.templateId, createdByAdmin: req.user._id });
-    if (!t) return fail(res, 'Template not found or not yours to delete', 404);
-    return success(res, null, 'Template deleted');
+    const template = await Template.findById(req.params.templateId);
+    if (!template) return fail(res, 'Template not found', 404);
+
+    // Authorization check: Must be owner admin OR superadmin
+    if (req.user.role !== 'superadmin' && String(template.userId) !== String(req.user._id)) {
+      return fail(res, 'Template is not yours to delete', 403);
+    }
+
+    await Template.findByIdAndDelete(req.params.templateId);
+    return success(res, null, 'Template deleted successfully');
   } catch (e) {
     return fail(res, e.message || 'Delete failed', 500);
   }
@@ -412,6 +466,82 @@ exports.metaSync = async (req, res) => {
   } catch (e) {
     const status = e.statusCode || 500;
     const msg = e.response?.data?.error?.message || e.message || 'Sync failed';
+    return fail(res, msg, status);
+  }
+};
+
+exports.adminApproveAndSubmit = async (req, res) => {
+  try {
+    const { templateId } = req.params;
+    
+    // Find template and ensure owner is the admin (req.user._id)
+    const template = await Template.findOne({ _id: templateId, userId: req.user._id });
+    if (!template) {
+      return fail(res, 'Template not found or not owned by you', 404);
+    }
+
+    if (template.metaStatus !== 'PENDING_ADMIN_APPROVAL' && template.metaStatus !== 'DRAFT') {
+      return fail(res, `Template is already submitted or has status ${template.metaStatus}`, 400);
+    }
+
+    // Normalize variables
+    let finalHeaderText = template.headerText ? template.headerText.trim() : '';
+    let finalBodyText = template.bodyPreview ? template.bodyPreview.trim() : '';
+    const sampleParams = template.sampleParams || [];
+    
+    let varIndex = 0;
+    const headerParams = [];
+    const bodyParams = [];
+
+    if (finalHeaderText) {
+      const headerMatches = finalHeaderText.match(/\{\{(\d+)\}\}/g);
+      if (headerMatches) {
+        finalHeaderText = finalHeaderText.replace(/\{\{(\d+)\}\}/g, '{{1}}');
+        headerParams.push(sampleParams[varIndex]?.value || 'header_sample');
+        varIndex += headerMatches.length;
+      }
+    }
+
+    if (finalBodyText) {
+      const bodyMatches = finalBodyText.match(/\{\{(\d+)\}\}/g);
+      if (bodyMatches) {
+        const uniqueNums = [...new Set(bodyMatches.map(m => parseInt(m.match(/\d+/)[0])))].sort((a,b)=>a-b);
+        uniqueNums.forEach((num, index) => {
+          const metaNum = index + 1;
+          const regex = new RegExp(`\\{\\{${num}\\}\\}`, 'g');
+          finalBodyText = finalBodyText.replace(regex, `{{${metaNum}}}`);
+          bodyParams.push(sampleParams[varIndex]?.value || `sample_${metaNum}`);
+          varIndex++;
+        });
+      }
+    }
+
+    // Submit to Meta
+    const metaResponse = await createMetaTemplate(req.user._id, {
+      name: template.whatsappTemplateName,
+      category: template.category || 'MARKETING',
+      language: template.languageCode || 'en',
+      bodyText: finalBodyText,
+      headerText: finalHeaderText,
+      footerText: template.footerText || '',
+      headerVariables: headerParams,
+      bodyVariables: bodyParams,
+    });
+
+    template.metaStatus = metaResponse.status || 'PENDING';
+    template.metaTemplateId = metaResponse.id || '';
+    template.bodyPreview = finalBodyText; // Update with normalized body
+    template.headerText = finalHeaderText; // Update with normalized header
+    await template.save();
+
+    return success(
+      res,
+      { template, metaStatus: template.metaStatus },
+      `Template Approved & Submitted to Meta — Status: ${template.metaStatus}`
+    );
+  } catch (e) {
+    const status = e.statusCode || 500;
+    const msg = e.response?.data?.error?.message || e.message || 'Failed to submit template to Meta';
     return fail(res, msg, status);
   }
 };

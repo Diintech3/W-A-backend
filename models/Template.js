@@ -21,7 +21,7 @@ const templateSchema = new mongoose.Schema(
     // Meta se approval status
     metaStatus: {
       type: String,
-      enum: ['PENDING', 'APPROVED', 'REJECTED', 'DISABLED', 'DRAFT'],
+      enum: ['PENDING', 'APPROVED', 'REJECTED', 'DISABLED', 'DRAFT', 'PENDING_ADMIN_APPROVAL'],
       default: 'DRAFT',
     },
     // Meta ne template ID diya (create hone ke baad)
