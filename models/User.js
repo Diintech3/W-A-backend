@@ -34,7 +34,7 @@ const userSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ['pending', 'active', 'rejected'],
-      default: 'active',
+      default: 'pending',
     },
     refreshToken: { type: String, default: '', select: false },
     apiSharing: {

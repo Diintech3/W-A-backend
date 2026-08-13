@@ -16,6 +16,7 @@ const protect = async (req, res, next) => {
     if (!user) return fail(res, 'User not found', 401);
 
     req.user = user;
+    req.isApiSharing = decoded.isApiSharing === true;
     next();
   } catch {
     return fail(res, 'Not authorized', 401);

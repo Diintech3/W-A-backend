@@ -8,8 +8,8 @@ const ACCESS_EXPIRES = '15m';
 const REFRESH_EXPIRES = '7d';
 const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 
-function signAccess(userId) {
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: ACCESS_EXPIRES });
+function signAccess(userId, isApiSharing = false) {
+  return jwt.sign({ id: userId, isApiSharing }, process.env.JWT_SECRET, { expiresIn: ACCESS_EXPIRES });
 }
 
 function signRefresh(userId) {
@@ -90,7 +90,8 @@ exports.login = async (req, res) => {
             password: envPassword,
             role: 'superadmin',
             plan: 'enterprise',
-            isVerified: true
+            isVerified: true,
+            status: 'active'
           });
         } else {
           user.email = envEmail;
@@ -314,7 +315,7 @@ exports.verifyApiSharingLogin = async (req, res) => {
       return fail(res, 'Invalid or revoked API Sharing credentials', 401);
     }
 
-    const jwtToken = signAccess(user._id);
+    const jwtToken = signAccess(user._id, true);
     const refreshToken = signRefresh(user._id);
     user.refreshToken = refreshToken;
     await user.save();

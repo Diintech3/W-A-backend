@@ -137,7 +137,8 @@ async function syncSuperAdmin() {
         password,
         role: 'superadmin',
         plan: 'enterprise',
-        isVerified: true
+        isVerified: true,
+        status: 'active'
       });
       await user.save();
       info(`👑 Created Super Admin from .env: ${email}`);

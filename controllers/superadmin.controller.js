@@ -146,6 +146,7 @@ exports.createAdmin = async (req, res) => {
       phone: phone || '',
       plan: plan || 'pro',
       role: 'admin',
+      status: 'active',
       isVerified: true,
       parentAdmin: req.user._id,
       adminLimits: {

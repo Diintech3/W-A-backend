@@ -34,5 +34,6 @@ router.use(partnerProtect);
 router.post('/sync-client', partnerCtrl.partnerSyncClient);
 router.post('/request-template', partnerCtrl.partnerRequestTemplate);
 router.get('/template-status', partnerCtrl.partnerGetTemplateStatus);
+router.get('/client-status', partnerCtrl.partnerGetClientStatus);
 
 module.exports = router;

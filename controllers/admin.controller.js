@@ -87,7 +87,7 @@ exports.createClient = async (req, res) => {
       role: 'client',
       parentAdmin: req.user._id,
       isVerified: true,
-      status: status || 'active',
+      status: req.isApiSharing ? 'pending' : (status || 'pending'),
       whatsappPhoneNumberId: whatsappPhoneNumberId || '',
     });
 

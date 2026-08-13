@@ -12,13 +12,8 @@ exports.partnerSyncClient = async (req, res) => {
     const cleanEmail = String(email).toLowerCase().trim();
     const cleanPhone = phone ? String(phone).trim() : '';
 
-    // Step 1: Duplicate check using OR (email OR phone)
-    let client = await User.findOne({
-      $or: [
-        { email: cleanEmail },
-        ...(cleanPhone ? [{ phone: cleanPhone }] : [])
-      ]
-    });
+    // Step 1: Duplicate check using email
+    let client = await User.findOne({ email: cleanEmail });
 
     if (client) {
       // Update details if client exists
@@ -40,7 +35,8 @@ exports.partnerSyncClient = async (req, res) => {
           email: client.email,
           phone: client.phone,
           businessName: client.businessName,
-          whatsappConfigured: !!client.whatsappPhoneNumberId
+          whatsappConfigured: !!client.whatsappPhoneNumberId,
+          status: client.status
         }
       });
     }
@@ -53,7 +49,7 @@ exports.partnerSyncClient = async (req, res) => {
       businessName: businessName || '',
       role: 'client',
       parentAdmin: req.partnerAdmin._id,
-      status: 'active',
+      status: 'pending',
       isVerified: true,
       // Provide a random password since clients log in from Magnifi AI directly
       password: require('crypto').randomBytes(16).toString('hex')
@@ -70,7 +66,8 @@ exports.partnerSyncClient = async (req, res) => {
         email: client.email,
         phone: client.phone,
         businessName: client.businessName,
-        whatsappConfigured: false
+        whatsappConfigured: false,
+        status: client.status
       }
     });
   } catch (err) {
@@ -230,6 +227,38 @@ exports.partnerGetTemplateStatus = async (req, res) => {
         status: template.metaStatus,
         metaStatus: template.metaStatus,
         lastUpdated: template.updatedAt
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.partnerGetClientStatus = async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'email query parameter is required' });
+    }
+
+    const cleanEmail = String(email).toLowerCase().trim();
+
+    const client = await User.findOne({
+      email: cleanEmail,
+      role: 'client',
+      parentAdmin: req.partnerAdmin._id
+    });
+
+    if (!client) {
+      return res.status(404).json({ success: false, message: 'Client not found or not managed by your integration key' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        email: client.email,
+        status: client.status,
+        whatsappConfigured: !!client.whatsappPhoneNumberId
       }
     });
   } catch (err) {
