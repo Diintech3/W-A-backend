@@ -178,7 +178,7 @@ exports.createCampaign = async (req, res) => {
     }
 
     const campaign = await Campaign.create({
-      userId: req.user._id,
+      userId: req.targetUserId,
       name,
       targetGroup,
       template,
@@ -195,7 +195,7 @@ exports.createCampaign = async (req, res) => {
 
 exports.listCampaigns = async (req, res) => {
   try {
-    const campaigns = await Campaign.find({ userId: req.user._id }).sort({ createdAt: -1 });
+    const campaigns = await Campaign.find({ userId: req.targetUserId }).sort({ createdAt: -1 });
     return success(res, { campaigns }, 'Campaigns');
   } catch (e) {
     return fail(res, e.message || 'Failed to list campaigns', 500);
@@ -204,7 +204,7 @@ exports.listCampaigns = async (req, res) => {
 
 exports.getCampaign = async (req, res) => {
   try {
-    const campaign = await Campaign.findOne({ _id: req.params.id, userId: req.user._id });
+    const campaign = await Campaign.findOne({ _id: req.params.id, userId: req.targetUserId });
     if (!campaign) return fail(res, 'Campaign not found', 404);
 
     const messages = await Message.find({ campaignId: campaign._id })

@@ -12,7 +12,7 @@ const {
 exports.listTemplates = async (req, res) => {
   try {
     // Client: sirf wo templates jo uske liye assign hain (assignedTo = client._id)
-    const templates = await Template.find({ assignedTo: req.user._id }).sort({ createdAt: -1 });
+    const templates = await Template.find({ assignedTo: req.targetUserId }).sort({ createdAt: -1 });
     return success(res, { templates }, 'Templates');
   } catch (e) {
     return fail(res, e.message || 'Failed to list templates', 500);

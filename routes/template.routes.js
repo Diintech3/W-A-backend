@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth.middleware');
+const clientScope = require('../middleware/clientScope.middleware');
 const t = require('../controllers/template.controller');
 
 // ─── Admin-only middleware ────────────────────────────────────────────────────
@@ -27,7 +28,7 @@ router.post('/admin/:templateId/refresh-status', protect, adminOnly, t.adminRefr
 router.post('/admin/:templateId/approve-and-submit', protect, adminOnly, t.adminApproveAndSubmit);
 
 // ─── Client: apni assigned templates ─────────────────────────────────────────
-router.get('/', protect, t.listTemplates);
+router.get('/', protect, clientScope, t.listTemplates);
 router.get('/:id', protect, t.getTemplate);
 
 // Client create/edit/delete blocked in controller itself

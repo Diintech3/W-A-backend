@@ -10,7 +10,7 @@ exports.createContact = async (req, res) => {
     if (!name || !norm) return fail(res, 'Valid name and phone are required');
 
     const contact = await Contact.create({
-      userId: req.user._id,
+      userId: req.targetUserId,
       name,
       phone: norm,
       email: email || '',
@@ -82,7 +82,7 @@ exports.listContacts = async (req, res) => {
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
     const search = (req.query.search || '').trim();
-    const filter = { userId: req.user._id };
+    const filter = { userId: req.targetUserId };
     if (search) {
       filter.$or = [
         { name: new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') },
@@ -150,7 +150,7 @@ exports.createGroup = async (req, res) => {
     const { name, description } = req.body;
     if (!name) return fail(res, 'Group name required');
     const group = await ContactGroup.create({
-      userId: req.user._id,
+      userId: req.targetUserId,
       name,
       description: description || '',
     });
@@ -162,10 +162,10 @@ exports.createGroup = async (req, res) => {
 
 exports.listGroups = async (req, res) => {
   try {
-    const groups = await ContactGroup.find({ userId: req.user._id }).sort({ name: 1 });
+    const groups = await ContactGroup.find({ userId: req.targetUserId }).sort({ name: 1 });
     const groupsWithCount = await Promise.all(
       groups.map(async (g) => {
-        const count = await Contact.countDocuments({ userId: req.user._id, group: g._id });
+        const count = await Contact.countDocuments({ userId: req.targetUserId, group: g._id });
         return { ...g.toObject(), contactCount: count };
       })
     );

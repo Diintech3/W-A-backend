@@ -6,7 +6,7 @@ const { emitToUser } = require('../services/socket.service');
 
 exports.listConversations = async (req, res) => {
   try {
-    const conversations = await Conversation.find({ userId: req.user._id }).sort({
+    const conversations = await Conversation.find({ userId: req.targetUserId }).sort({
       lastMessageAt: -1,
     });
     return success(res, { conversations }, 'Conversations');
@@ -17,7 +17,7 @@ exports.listConversations = async (req, res) => {
 
 exports.getMessages = async (req, res) => {
   try {
-    const conv = await Conversation.findOne({ _id: req.params.id, userId: req.user._id });
+    const conv = await Conversation.findOne({ _id: req.params.id, userId: req.targetUserId });
     if (!conv) return fail(res, 'Conversation not found', 404);
 
     const messages = await Message.find({ conversationId: conv._id }).sort({ createdAt: 1 });
@@ -26,6 +26,9 @@ exports.getMessages = async (req, res) => {
     await conv.save();
 
     emitToUser(String(req.user._id), 'inbox:update', { conversationId: String(conv._id) });
+    if (String(req.user._id) !== String(req.targetUserId)) {
+      emitToUser(String(req.targetUserId), 'inbox:update', { conversationId: String(conv._id) });
+    }
 
     return success(res, { messages, conversation: conv }, 'Messages');
   } catch (e) {
@@ -38,13 +41,13 @@ exports.reply = async (req, res) => {
     const { text } = req.body;
     if (!text) return fail(res, 'Message text required');
 
-    const conv = await Conversation.findOne({ _id: req.params.id, userId: req.user._id });
+    const conv = await Conversation.findOne({ _id: req.params.id, userId: req.targetUserId });
     if (!conv) return fail(res, 'Conversation not found', 404);
 
     const phone = conv.customerPhone.replace(/\D/g, '');
 
     const msgDoc = await Message.create({
-      userId: req.user._id,
+      userId: req.targetUserId,
       conversationId: conv._id,
       direction: 'outbound',
       from: 'agent',
@@ -55,7 +58,7 @@ exports.reply = async (req, res) => {
     });
 
     try {
-      const apiRes = await whatsapp.sendTextMessage(req.user._id, phone, text);
+      const apiRes = await whatsapp.sendTextMessage(req.targetUserId, phone, text);
       msgDoc.status = 'sent';
       msgDoc.whatsappMessageId = apiRes?.messages?.[0]?.id || '';
       await msgDoc.save();
@@ -77,6 +80,13 @@ exports.reply = async (req, res) => {
       message: msgDoc,
     });
     emitToUser(String(req.user._id), 'inbox:update', { conversationId: String(conv._id) });
+    if (String(req.user._id) !== String(req.targetUserId)) {
+      emitToUser(String(req.targetUserId), 'inbox:newMessage', {
+        conversationId: String(conv._id),
+        message: msgDoc,
+      });
+      emitToUser(String(req.targetUserId), 'inbox:update', { conversationId: String(conv._id) });
+    }
 
     return success(res, { message: msgDoc }, 'Reply sent');
   } catch (e) {
@@ -106,13 +116,16 @@ exports.toggleAiState = async (req, res) => {
   try {
     const { isAIPaused } = req.body;
     const conv = await Conversation.findOneAndUpdate(
-      { _id: req.params.id, userId: req.user._id },
+      { _id: req.params.id, userId: req.targetUserId },
       { isAIPaused: Boolean(isAIPaused) },
       { new: true }
     );
     if (!conv) return fail(res, 'Conversation not found', 404);
 
     emitToUser(String(req.user._id), 'inbox:update', { conversationId: String(conv._id) });
+    if (String(req.user._id) !== String(req.targetUserId)) {
+      emitToUser(String(req.targetUserId), 'inbox:update', { conversationId: String(conv._id) });
+    }
     return success(res, { conversation: conv }, 'AI state updated');
   } catch (e) {
     return fail(res, e.message || 'Toggle AI failed', 500);
