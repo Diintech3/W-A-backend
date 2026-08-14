@@ -9,6 +9,7 @@ const { errorHandler, notFound } = require('./middleware/error.middleware');
 const { initSocket } = require('./services/socket.service');
 const { initScheduler } = require('./services/scheduler.service');
 const { info, error } = require('./utils/logger');
+const clientScope = require('./middleware/clientScope.middleware');
 
 const authRoutes = require('./routes/auth.routes');
 const contactRoutes = require('./routes/contact.routes');
@@ -93,9 +94,11 @@ app.use('/api', async (req, res, next) => {
 });
 
 app.use('/api/auth', authRoutes);
-app.post('/api/whatsapp/connect', protect, authController.connectWhatsApp);
-app.post('/api/whatsapp/agent', protect, authController.saveAIAgentId);
-app.get('/api/whatsapp/agent', protect, authController.getAIAgentId);
+app.post('/api/whatsapp/connect', protect, clientScope, authController.connectWhatsApp);
+app.post('/api/whatsapp/agent', protect, clientScope, authController.saveAIAgentId);
+app.get('/api/whatsapp/agent', protect, clientScope, authController.getAIAgentId);
+app.post('/api/settings/ai-agent', protect, clientScope, authController.saveAIAgentId);
+app.get('/api/settings/ai-agent', protect, clientScope, authController.getAIAgentId);
 app.use('/api/contacts', contactRoutes);
 app.use('/api/campaigns', campaignRoutes);
 app.use('/api/messages', messageRoutes);

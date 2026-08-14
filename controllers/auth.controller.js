@@ -232,8 +232,9 @@ exports.connectWhatsApp = async (req, res) => {
     if (whatsappWabaId && String(whatsappWabaId).trim()) {
       updatePayload.whatsappWabaId = String(whatsappWabaId).trim();
     }
-    await User.findByIdAndUpdate(req.user._id, updatePayload);
-    const user = await User.findById(req.user._id);
+    const targetId = req.targetUserId || req.user._id;
+    await User.findByIdAndUpdate(targetId, updatePayload);
+    const user = await User.findById(targetId);
     return success(res, { user: sanitizeUser(user) }, 'WhatsApp connected');
   } catch (e) {
     return fail(res, e.message || 'Failed to save connection', 500);
@@ -246,7 +247,7 @@ exports.saveAIAgentId = async (req, res) => {
     if (agentId === undefined) {
       return fail(res, 'AI Agent ID is required');
     }
-    const userId = req.user._id;
+    const userId = req.targetUserId || req.user._id;
     const mapping = await AIAgent.findOneAndUpdate(
       { userId },
       { userId, externalAgentId: String(agentId).trim() },
@@ -260,7 +261,7 @@ exports.saveAIAgentId = async (req, res) => {
 
 exports.getAIAgentId = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = req.targetUserId || req.user._id;
     const mapping = await AIAgent.findOne({ userId });
     return success(res, { agentId: mapping ? mapping.externalAgentId : '' }, 'AI Agent ID');
   } catch (e) {

@@ -131,3 +131,90 @@ exports.toggleAiState = async (req, res) => {
     return fail(res, e.message || 'Toggle AI failed', 500);
   }
 };
+
+exports.sendTemplate = async (req, res) => {
+  try {
+    const { phone, templateName, language, variables } = req.body;
+    if (!phone || !templateName) {
+      return fail(res, 'Phone number and template name are required', 400);
+    }
+
+    const targetUserId = req.targetUserId || req.user._id;
+    const cleanPhone = String(phone).replace(/\D/g, '');
+    if (!cleanPhone) {
+      return fail(res, 'Invalid phone number', 400);
+    }
+
+    let apiRes;
+    try {
+      apiRes = await whatsapp.sendTemplateMessage(
+        targetUserId,
+        cleanPhone,
+        templateName.trim(),
+        language || 'en',
+        variables || []
+      );
+    } catch (err) {
+      const errorMsg = err.response?.data?.error?.message || err.message || 'Failed to send template message via WhatsApp';
+      return fail(res, errorMsg, 502);
+    }
+
+    const wamid = apiRes?.messages?.[0]?.id || '';
+
+    let conv = await Conversation.findOne({ userId: targetUserId, customerPhone: cleanPhone });
+    if (!conv) {
+      conv = await Conversation.create({
+        userId: targetUserId,
+        customerPhone: cleanPhone,
+        customerName: '',
+        lastMessage: `[Template: ${templateName}]`,
+        lastMessageAt: new Date(),
+        unreadCount: 0,
+      });
+    } else {
+      conv.lastMessage = `[Template: ${templateName}]`;
+      conv.lastMessageAt = new Date();
+      await conv.save();
+    }
+
+    const msgDoc = await Message.create({
+      userId: targetUserId,
+      conversationId: conv._id,
+      direction: 'outbound',
+      from: 'business',
+      to: cleanPhone,
+      body: `Template: ${templateName}`,
+      type: 'template',
+      status: 'sent',
+      whatsappMessageId: wamid,
+    });
+
+    emitToUser(String(req.user._id), 'inbox:newMessage', {
+      conversationId: String(conv._id),
+      message: msgDoc,
+    });
+    emitToUser(String(req.user._id), 'inbox:update', { conversationId: String(conv._id) });
+    if (String(req.user._id) !== String(targetUserId)) {
+      emitToUser(String(targetUserId), 'inbox:newMessage', {
+        conversationId: String(conv._id),
+        message: msgDoc,
+      });
+      emitToUser(String(targetUserId), 'inbox:update', { conversationId: String(conv._id) });
+    }
+
+    return success(
+      res,
+      {
+        conversationId: String(conv._id),
+        messageId: wamid || String(msgDoc._id),
+        status: 'sent',
+        message: msgDoc,
+      },
+      'Template message sent successfully',
+      200
+    );
+  } catch (e) {
+    return fail(res, e.message || 'Failed to send template', 500);
+  }
+};
+
