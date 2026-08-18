@@ -29,11 +29,11 @@ router.post('/admin/:templateId/approve-and-submit', protect, adminOnly, t.admin
 
 // ─── Client: apni assigned templates ─────────────────────────────────────────
 router.get('/', protect, clientScope, t.listTemplates);
-router.get('/:id', protect, t.getTemplate);
+router.get('/:id', protect, clientScope, t.getTemplate);
 
 // Client create/edit/delete blocked in controller itself
-router.post('/', protect, t.createTemplate);
-router.patch('/:id', protect, t.updateTemplate);
-router.delete('/:id', protect, t.deleteTemplate);
+router.post('/', protect, clientScope, t.createTemplate);
+router.patch('/:id', protect, clientScope, t.updateTemplate);
+router.delete('/:id', protect, clientScope, t.deleteTemplate);
 
 module.exports = router;

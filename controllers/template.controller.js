@@ -23,7 +23,7 @@ exports.getTemplate = async (req, res) => {
   try {
     const template = await Template.findOne({
       _id: req.params.id,
-      assignedTo: req.user._id,
+      assignedTo: req.targetUserId,
     });
     if (!template) return fail(res, 'Template not found', 404);
     return success(res, { template }, 'Template');
@@ -43,7 +43,7 @@ exports.createTemplate = async (req, res) => {
 
     // Check if template exists for client
     const existing = await Template.findOne({
-      assignedTo: req.user._id,
+      assignedTo: req.targetUserId,
       whatsappTemplateName: cleanName
     });
     if (existing) {
@@ -53,7 +53,7 @@ exports.createTemplate = async (req, res) => {
     // Client templates will be owned by their parent Admin and assigned to this client
     const template = await Template.create({
       userId: req.user.parentAdmin || req.user._id, // Owner is parent admin (who holds the Meta API keys)
-      assignedTo: req.user._id,
+      assignedTo: req.targetUserId,
       createdByAdmin: null, // null means client requested it
       name: name.trim(),
       whatsappTemplateName: cleanName,
@@ -76,7 +76,7 @@ exports.createTemplate = async (req, res) => {
 };
 exports.updateTemplate = async (req, res) => {
   try {
-    const template = await Template.findOne({ _id: req.params.id, assignedTo: req.user._id });
+    const template = await Template.findOne({ _id: req.params.id, assignedTo: req.targetUserId });
     if (!template) return fail(res, 'Template not found', 404);
 
     if (req.body.sampleParams) {
@@ -94,7 +94,7 @@ exports.deleteTemplate = async (req, res) => {
   try {
     const t = await Template.findOneAndDelete({ 
       _id: req.params.id, 
-      assignedTo: req.user._id 
+      assignedTo: req.targetUserId 
     });
     if (!t) return fail(res, 'Template not found or not yours to delete', 404);
     return success(res, null, 'Template deleted successfully');

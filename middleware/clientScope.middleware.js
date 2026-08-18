@@ -1,3 +1,5 @@
+const mongoose = require('mongoose');
+
 const clientScope = (req, res, next) => {
   req.targetUserId = req.user ? req.user._id : null;
 
@@ -6,7 +8,10 @@ const clientScope = (req, res, next) => {
     (req.user.role === 'admin' || req.user.role === 'superadmin') &&
     req.headers['x-client-id']
   ) {
-    req.targetUserId = req.headers['x-client-id'];
+    const clientId = req.headers['x-client-id'];
+    if (mongoose.Types.ObjectId.isValid(clientId)) {
+      req.targetUserId = clientId;
+    }
   }
 
   next();

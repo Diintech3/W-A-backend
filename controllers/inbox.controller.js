@@ -218,3 +218,33 @@ exports.sendTemplate = async (req, res) => {
   }
 };
 
+exports.markRead = async (req, res) => {
+  try {
+    const conv = await Conversation.findOne({ _id: req.params.id, userId: req.targetUserId });
+    if (!conv) return fail(res, 'Conversation not found', 404);
+
+    conv.unreadCount = 0;
+    await conv.save();
+
+    emitToUser(String(req.user._id), 'inbox:update', { conversationId: String(conv._id) });
+    return success(res, null, 'Conversation marked as read');
+  } catch (e) {
+    return fail(res, e.message || 'Failed to mark as read', 500);
+  }
+};
+
+exports.resolve = async (req, res) => {
+  try {
+    const conv = await Conversation.findOne({ _id: req.params.id, userId: req.targetUserId });
+    if (!conv) return fail(res, 'Conversation not found', 404);
+
+    conv.status = 'resolved';
+    await conv.save();
+
+    emitToUser(String(req.user._id), 'inbox:update', { conversationId: String(conv._id) });
+    return success(res, { conversation: conv }, 'Conversation resolved');
+  } catch (e) {
+    return fail(res, e.message || 'Failed to resolve conversation', 500);
+  }
+};
+

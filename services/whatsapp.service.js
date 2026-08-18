@@ -40,6 +40,32 @@ async function sendTextMessage(userId, to, message) {
 }
 
 function buildTemplateComponents(params) {
+  const components = [];
+
+  // Check if params is an object containing header or body keys
+  if (params && !Array.isArray(params) && (params.header || params.body)) {
+    if (params.header && params.header.length) {
+      components.push({
+        type: 'header',
+        parameters: params.header.map(val => {
+          const isImg = /^https?:\/\/.+/i.test(val);
+          return isImg ? { type: 'image', image: { link: val } } : { type: 'text', text: String(val) };
+        })
+      });
+    }
+    if (params.body && params.body.length) {
+      components.push({
+        type: 'body',
+        parameters: params.body.map(val => ({
+          type: 'text',
+          text: String(val)
+        }))
+      });
+    }
+    return components;
+  }
+
+  // Fallback to array parameters (Old behavior)
   if (!params || !params.length) {
     return [{ type: 'body', parameters: [] }];
   }
@@ -68,7 +94,6 @@ function buildTemplateComponents(params) {
     }
   }
 
-  const components = [];
   if (headerParams.length > 0) {
     components.push({
       type: 'header',
