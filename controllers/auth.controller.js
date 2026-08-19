@@ -4,7 +4,7 @@ const { success, fail } = require('../utils/apiResponse');
 const { sendWelcomeEmail } = require('../services/email.service');
 const AIAgent = require('../models/AIAgent');
 
-const ACCESS_EXPIRES = '15m';
+const ACCESS_EXPIRES = '12h';
 const REFRESH_EXPIRES = '7d';
 const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 
