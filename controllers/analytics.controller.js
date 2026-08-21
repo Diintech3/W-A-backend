@@ -1,10 +1,11 @@
 const Message = require('../models/Message');
 const Campaign = require('../models/Campaign');
+const mongoose = require('mongoose');
 const { success, fail } = require('../utils/apiResponse');
 
 exports.overview = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = new mongoose.Types.ObjectId(req.targetUserId || req.user._id);
     const [agg] = await Message.aggregate([
       { $match: { userId, direction: 'outbound' } },
       {
@@ -52,7 +53,8 @@ exports.overview = async (req, res) => {
 
 exports.campaignStats = async (req, res) => {
   try {
-    const campaigns = await Campaign.find({ userId: req.user._id })
+    const userId = new mongoose.Types.ObjectId(req.targetUserId || req.user._id);
+    const campaigns = await Campaign.find({ userId })
       .sort({ createdAt: -1 })
       .limit(50)
       .select('name status totalContacts sent delivered read failed createdAt');
@@ -65,7 +67,7 @@ exports.campaignStats = async (req, res) => {
 
 exports.timeline = async (req, res) => {
   try {
-    const userId = req.user._id;
+    const userId = new mongoose.Types.ObjectId(req.targetUserId || req.user._id);
     const since = new Date();
     since.setDate(since.getDate() - 30);
 

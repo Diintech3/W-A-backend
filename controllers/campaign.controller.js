@@ -220,7 +220,7 @@ exports.getCampaign = async (req, res) => {
 exports.updateCampaign = async (req, res) => {
   try {
     const { name, targetGroup, template, scheduledAt, photoshareFolderId } = req.body;
-    const campaign = await Campaign.findOne({ _id: req.params.id, userId: req.user._id });
+    const campaign = await Campaign.findOne({ _id: req.params.id, userId: req.targetUserId || req.user._id });
     if (!campaign) return fail(res, 'Campaign not found', 404);
     if (campaign.status === 'running') return fail(res, 'Cannot edit a running campaign');
 
@@ -250,7 +250,7 @@ exports.updateCampaign = async (req, res) => {
 
 exports.deleteCampaign = async (req, res) => {
   try {
-    const c = await Campaign.findOneAndDelete({ _id: req.params.id, userId: req.user._id });
+    const c = await Campaign.findOneAndDelete({ _id: req.params.id, userId: req.targetUserId || req.user._id });
     if (!c) return fail(res, 'Campaign not found', 404);
     await Message.deleteMany({ campaignId: c._id });
     return success(res, null, 'Campaign deleted');
@@ -261,7 +261,7 @@ exports.deleteCampaign = async (req, res) => {
 
 exports.sendCampaign = async (req, res) => {
   try {
-    const campaign = await Campaign.findOne({ _id: req.params.id, userId: req.user._id });
+    const campaign = await Campaign.findOne({ _id: req.params.id, userId: req.targetUserId || req.user._id });
     if (!campaign) return fail(res, 'Campaign not found', 404);
 
     if (campaign.status === 'running') {
@@ -272,13 +272,13 @@ exports.sendCampaign = async (req, res) => {
     campaign.scheduledAt = null;
     await campaign.save();
 
-    emitToUser(String(req.user._id), 'campaign:progress', {
+    emitToUser(String(req.targetUserId || req.user._id), 'campaign:progress', {
       campaignId: String(campaign._id),
       status: 'started',
     });
 
     setImmediate(() => {
-      runCampaignSendJob(campaign._id, req.user._id).catch((err) => {
+      runCampaignSendJob(campaign._id, req.targetUserId || req.user._id).catch((err) => {
         console.error('Campaign send error:', err);
       });
     });

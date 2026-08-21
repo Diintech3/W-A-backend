@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth.middleware');
+const clientScope = require('../middleware/clientScope.middleware');
 const analytics = require('../controllers/analytics.controller');
 
-router.get('/overview', protect, analytics.overview);
-router.get('/campaigns', protect, analytics.campaignStats);
-router.get('/timeline', protect, analytics.timeline);
+router.get('/overview', protect, clientScope, analytics.overview);
+router.get('/campaigns', protect, clientScope, analytics.campaignStats);
+router.get('/timeline', protect, clientScope, analytics.timeline);
 
 module.exports = router;
