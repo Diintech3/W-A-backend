@@ -4,6 +4,7 @@ const Campaign = require('../models/Campaign');
 const Message = require('../models/Message');
 const AIAgent = require('../models/AIAgent');
 const { success, fail } = require('../utils/apiResponse');
+const { sendApprovalEmail } = require('../services/email.service');
 
 exports.getStats = async (req, res) => {
   try {
@@ -123,6 +124,9 @@ exports.updateClient = async (req, res) => {
       client.parentAdmin = req.user._id;
     }
 
+    // Check if status is transitioning to active to send approval email
+    const isActivating = (status === 'active' && client.status !== 'active');
+
     if (name !== undefined) client.name = name;
     if (businessName !== undefined) client.businessName = businessName;
     if (phone !== undefined) client.phone = phone;
@@ -135,6 +139,11 @@ exports.updateClient = async (req, res) => {
     }
 
     await client.save();
+
+    // Send the email if the account just got activated
+    if (isActivating) {
+      sendApprovalEmail(client.email, client.name).catch(err => console.error('Failed to send approval email', err));
+    }
 
     if (aiAgentId !== undefined) {
       const agentIdStr = String(aiAgentId).trim();

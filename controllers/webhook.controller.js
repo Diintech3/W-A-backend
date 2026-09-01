@@ -509,10 +509,29 @@ async function handleStatusUpdate(user, value) {
     const st = map[status];
     if (!st) continue;
 
-    await Message.findOneAndUpdate(
-      { userId: user._id, whatsappMessageId: id },
-      { status: st }
+    const updateFields = { status: st };
+    if (status === 'failed') {
+      if (s.errors && s.errors.length > 0) {
+        const errDetail = s.errors[0];
+        updateFields.errorReason = `(#${errDetail.code || ''}) ${errDetail.message || errDetail.title || errDetail.error_data?.details || 'Delivery failed'}`;
+      } else {
+        updateFields.errorReason = 'Meta delivery failed (Number unreachable or invalid)';
+      }
+    }
+
+    // Match by whatsappMessageId (globally unique identifier across all users)
+    const updated = await Message.findOneAndUpdate(
+      { whatsappMessageId: id },
+      updateFields,
+      { new: true }
     );
+
+    if (!updated && user?._id) {
+      await Message.findOneAndUpdate(
+        { userId: user._id, whatsappMessageId: id },
+        updateFields
+      );
+    }
   }
 }
 

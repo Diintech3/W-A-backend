@@ -13,9 +13,9 @@ function adminOnly(req, res, next) {
 }
 
 // ─── Meta Graph API routes (admin only) ──────────────────────────────────────
-router.get('/meta/list', protect, adminOnly, t.metaList);
-router.post('/meta/verify', protect, t.metaVerify); // client bhi use kar sakta hai verify ke liye
-router.post('/meta/sync', protect, adminOnly, t.metaSync);
+router.get('/meta/list', protect, adminOnly, clientScope, t.metaList);
+router.post('/meta/verify', protect, clientScope, t.metaVerify); // client bhi use kar sakta hai verify ke liye
+router.post('/meta/sync', protect, adminOnly, clientScope, t.metaSync);
 
 // ─── Admin: client-specific template management ───────────────────────────────
 router.get('/admin/clients/:clientId', protect, adminOnly, t.adminListClientTemplates);

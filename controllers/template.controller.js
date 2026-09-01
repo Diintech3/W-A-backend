@@ -150,10 +150,10 @@ exports.adminCreateTemplateOnMeta = async (req, res) => {
 
     // Agar admin ne custom wabaId diya hai to usse admin user par temporarily set karo
     // (ya directly use karo service mein)
-    let effectiveAdminId = req.user._id;
+    let effectiveUserId = clientId;
     if (wabaId && wabaId.trim()) {
-      // Temporarily update admin's wabaId for this call
-      await User.findByIdAndUpdate(req.user._id, { whatsappWabaId: wabaId.trim() });
+      // Temporarily update client's wabaId for this call
+      await User.findByIdAndUpdate(clientId, { whatsappWabaId: wabaId.trim() });
     }
 
     // Template name clean karo (Meta rules: lowercase, underscore, no spaces)
@@ -192,7 +192,7 @@ exports.adminCreateTemplateOnMeta = async (req, res) => {
     }
 
     // Meta par create karo
-    const metaResponse = await createMetaTemplate(effectiveAdminId, {
+    const metaResponse = await createMetaTemplate(effectiveUserId, {
       name: cleanName,
       category: category || 'MARKETING',
       language: language || 'en',
@@ -259,7 +259,7 @@ exports.adminAssignTemplate = async (req, res) => {
     let metaStatus = 'DRAFT';
     let headerType = 'TEXT';
     try {
-      const verification = await verifyMetaTemplate(req.user._id, whatsappTemplateName);
+      const verification = await verifyMetaTemplate(clientId, whatsappTemplateName);
       if (verification.found) {
         metaStatus = verification.status;
         const headerComp = (verification.template?.components || []).find((c) => c.type === 'HEADER');
@@ -345,7 +345,7 @@ exports.adminRefreshStatus = async (req, res) => {
     const template = await Template.findOne({ _id: req.params.templateId });
     if (!template) return fail(res, 'Template not found', 404);
 
-    const result = await refreshTemplateStatus(req.user._id, template.whatsappTemplateName);
+    const result = await refreshTemplateStatus(template.assignedTo || req.user._id, template.whatsappTemplateName);
     if (result.found) {
       template.metaStatus = result.status;
       await template.save();
@@ -365,7 +365,7 @@ exports.adminRefreshAllStatus = async (req, res) => {
   try {
     const { clientId } = req.params;
     const templates = await Template.find({ assignedTo: clientId });
-    const metaTemplates = await fetchMetaTemplates(req.user._id);
+    const metaTemplates = await fetchMetaTemplates(clientId);
 
     let updated = 0;
     for (const t of templates) {
@@ -389,7 +389,8 @@ exports.adminRefreshAllStatus = async (req, res) => {
 
 exports.metaList = async (req, res) => {
   try {
-    const templates = await fetchMetaTemplates(req.user._id);
+    const targetUserId = req.query.clientId || req.targetUserId || req.user._id;
+    const templates = await fetchMetaTemplates(targetUserId);
     return success(res, { templates }, `Fetched ${templates.length} templates from Meta`);
   } catch (e) {
     const status = e.statusCode || 500;
@@ -400,9 +401,10 @@ exports.metaList = async (req, res) => {
 
 exports.metaVerify = async (req, res) => {
   try {
-    const { name } = req.body;
+    const { name, clientId } = req.body;
     if (!name || !name.trim()) return fail(res, 'Template name is required', 400);
-    const result = await verifyMetaTemplate(req.user._id, name.trim());
+    const targetUserId = clientId || req.targetUserId || req.user._id;
+    const result = await verifyMetaTemplate(targetUserId, name.trim());
     return success(res, result, result.found ? `Template "${name}" found on Meta` : `Template "${name}" not found on Meta`);
   } catch (e) {
     const status = e.statusCode || 500;
@@ -413,7 +415,9 @@ exports.metaVerify = async (req, res) => {
 
 exports.metaSync = async (req, res) => {
   try {
-    const metaTemplates = await fetchMetaTemplates(req.user._id);
+    const { clientId } = req.body;
+    const targetUserId = clientId || req.targetUserId || req.user._id;
+    const metaTemplates = await fetchMetaTemplates(targetUserId);
     const approved = metaTemplates.filter((t) => t.status === 'APPROVED');
     let created = 0, updated = 0;
     for (const mt of approved) {

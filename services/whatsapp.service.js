@@ -5,15 +5,30 @@ const apiVersion = () => process.env.WHATSAPP_API_VERSION || 'v19.0';
 
 async function getCreds(userId) {
   const user = await User.findById(userId).select('+whatsappAccessToken');
-  if (!user?.whatsappPhoneNumberId || !user?.whatsappAccessToken) {
+  
+  const phoneNumberId = user?.whatsappPhoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const token = user?.whatsappAccessToken || process.env.WHATSAPP_ACCESS_TOKEN;
+
+  if (!phoneNumberId || !token) {
     const err = new Error('WhatsApp not connected. Add Phone Number ID and Access Token.');
     err.statusCode = 400;
     throw err;
   }
   return {
-    phoneNumberId: user.whatsappPhoneNumberId,
-    token: user.whatsappAccessToken,
+    phoneNumberId,
+    token,
   };
+}
+
+function normalizePhone(to) {
+  if (!to) return '';
+  let num = String(to).replace(/\D/g, '');
+  if (num.length === 10 && /^[6-9]/.test(num)) {
+    num = '91' + num;
+  } else if (num.length === 11 && num.startsWith('0') && /^[6-9]/.test(num.slice(1))) {
+    num = '91' + num.slice(1);
+  }
+  return num;
 }
 
 function graphUrl(phoneNumberId, path = '') {
@@ -23,7 +38,7 @@ function graphUrl(phoneNumberId, path = '') {
 
 async function sendTextMessage(userId, to, message) {
   const { phoneNumberId, token } = await getCreds(userId);
-  const toNum = String(to).replace(/\D/g, '');
+  const toNum = normalizePhone(to);
   const url = graphUrl(phoneNumberId, 'messages');
   const { data } = await axios.post(
     url,
@@ -67,7 +82,7 @@ function buildTemplateComponents(params) {
 
   // Fallback to array parameters (Old behavior)
   if (!params || !params.length) {
-    return [{ type: 'body', parameters: [] }];
+    return [];
   }
 
   const headerParams = [];
@@ -101,7 +116,7 @@ function buildTemplateComponents(params) {
     });
   }
   
-  if (bodyParams.length > 0 || components.length === 0) {
+  if (bodyParams.length > 0) {
     components.push({
       type: 'body',
       parameters: bodyParams
@@ -113,15 +128,16 @@ function buildTemplateComponents(params) {
 
 async function sendTemplateMessage(userId, to, templateName, languageCode, params) {
   const { phoneNumberId, token } = await getCreds(userId);
-  const toNum = String(to).replace(/\D/g, '');
+  const toNum = normalizePhone(to);
   const url = graphUrl(phoneNumberId, 'messages');
   const bodyParams = buildTemplateComponents(params);
   const templatePayload = {
     name: templateName,
     language: { code: languageCode || 'en' },
   };
-  if (bodyParams[0]?.parameters?.length) {
-    templatePayload.components = bodyParams;
+  const validComponents = (bodyParams || []).filter(c => c && c.parameters && c.parameters.length > 0);
+  if (validComponents.length > 0) {
+    templatePayload.components = validComponents;
   }
   const { data } = await axios.post(
     url,
@@ -138,7 +154,7 @@ async function sendTemplateMessage(userId, to, templateName, languageCode, param
 
 async function sendMediaMessage(userId, to, type, mediaUrl, caption) {
   const { phoneNumberId, token } = await getCreds(userId);
-  const toNum = String(to).replace(/\D/g, '');
+  const toNum = normalizePhone(to);
   const url = graphUrl(phoneNumberId, 'messages');
   const mediaType = ['image', 'video', 'audio', 'document'].includes(type) ? type : 'image';
   const payload = {
@@ -158,7 +174,7 @@ async function sendMediaMessage(userId, to, type, mediaUrl, caption) {
 
 async function sendInteractiveMessage(userId, to, buttons, bodyText) {
   const { phoneNumberId, token } = await getCreds(userId);
-  const toNum = String(to).replace(/\D/g, '');
+  const toNum = normalizePhone(to);
   const url = graphUrl(phoneNumberId, 'messages');
   const list = (buttons || []).slice(0, 3).map((b, i) => ({
     type: 'reply',

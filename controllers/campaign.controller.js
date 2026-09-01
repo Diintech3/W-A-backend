@@ -8,6 +8,8 @@ const { success, fail } = require('../utils/apiResponse');
 const whatsapp = require('../services/whatsapp.service');
 const { emitToUser } = require('../services/socket.service');
 
+const { normalizePhone } = require('../utils/csvParser');
+
 function templateParamsFromDoc(template) {
   const samples = template.sampleParams || [];
   if (!samples.length) return [];
@@ -74,7 +76,7 @@ async function runCampaignSendJob(campaignId, userId) {
 
   for (let i = 0; i < contacts.length; i++) {
     const contact = contacts[i];
-    const phone = contact.phone.replace(/\D/g, '');
+    const phone = normalizePhone(contact.phone) || String(contact.phone).replace(/\D/g, '');
 
     // Auto-link user conversation to photoshare folder if configured
     if (campaign.photoshareFolderId) {
@@ -126,7 +128,10 @@ async function runCampaignSendJob(campaignId, userId) {
       await upsertAnalyticsDay(userId, { sent: 1 });
     } catch (err) {
       msgDoc.status = 'failed';
-      msgDoc.errorReason = err.response?.data?.error?.message || err.message || 'Send failed';
+      const metaErr = err.response?.data?.error;
+      msgDoc.errorReason = metaErr
+        ? `(#${metaErr.code || ''}) ${metaErr.message || err.message}${metaErr.error_data?.details ? ' - ' + metaErr.error_data.details : ''}`
+        : (err.message || 'Send failed');
       await msgDoc.save();
       failed += 1;
       await upsertAnalyticsDay(userId, { failed: 1 });

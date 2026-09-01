@@ -20,8 +20,20 @@ async function sendWelcomeEmail(to, name) {
   await transport.sendMail({
     from,
     to,
-    subject: 'Welcome to WhatsApp Marketing SaaS',
-    text: `Hi ${name},\n\nYour account is ready. Connect WhatsApp in the dashboard to start sending campaigns.\n`,
+    subject: 'Welcome to WhatsApp Marketing SaaS - Registration Pending',
+    text: `Hi ${name},\n\nYour registration has been successfully received.\n\nYour account is currently Pending Approval from the Reseller Agency / Admin. You will receive another email once your account has been approved.\n`,
+  });
+}
+
+async function sendApprovalEmail(to, name, loginUrl = 'https://w-a-frontend.vercel.app/login') {
+  const transport = getTransporter();
+  if (!transport) return;
+  const from = process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@localhost';
+  await transport.sendMail({
+    from,
+    to,
+    subject: 'Account Approved - WhatsApp Marketing SaaS',
+    text: `Hi ${name},\n\nCongratulations! Your account has been approved by the Admin.\n\nYou can now log in to the dashboard using your credentials to connect WhatsApp and start sending campaigns.\n\nLogin here: ${loginUrl}\n`,
   });
 }
 
@@ -37,4 +49,4 @@ async function sendPasswordResetEmail(to, resetLink) {
   });
 }
 
-module.exports = { sendWelcomeEmail, sendPasswordResetEmail, getTransporter };
+module.exports = { sendWelcomeEmail, sendApprovalEmail, sendPasswordResetEmail, getTransporter };
