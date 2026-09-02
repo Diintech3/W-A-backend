@@ -15,7 +15,25 @@ const templateSchema = new mongoose.Schema(
     bodyPreview: { type: String, default: '' },
     headerText: { type: String, default: '' },
     footerText: { type: String, default: '' },
-    headerType: { type: String, default: 'TEXT' }, // 'TEXT' or 'IMAGE'
+    headerType: {
+      type: String,
+      enum: ['NONE', 'TEXT', 'IMAGE', 'VIDEO', 'DOCUMENT'],
+      default: 'NONE',
+    },
+    mediaUrl: { type: String, default: '' },
+    mediaHandle: { type: String, default: '' },
+    buttons: [
+      {
+        type: {
+          type: String,
+          enum: ['QUICK_REPLY', 'URL', 'PHONE_NUMBER'],
+          default: 'QUICK_REPLY',
+        },
+        text: { type: String, default: '', trim: true },
+        url: { type: String, default: '', trim: true },
+        phoneNumber: { type: String, default: '', trim: true },
+      },
+    ],
     parameterFormat: { type: String, default: 'POSITIONAL' },
     sampleParams: [{ key: String, value: String }],
     // Meta se approval status

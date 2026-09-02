@@ -44,6 +44,11 @@ const userSchema = new mongoose.Schema(
       referenceKey: { type: String, default: '' },
       generatedAt: { type: Date, default: null },
     },
+    businessHours: {
+      timezone: { type: String, default: 'Asia/Kolkata' },
+      startHour: { type: Number, default: 9 },
+      endHour: { type: Number, default: 20 },
+    },
   },
   { timestamps: true }
 );

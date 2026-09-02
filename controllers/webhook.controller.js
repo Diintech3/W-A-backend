@@ -12,6 +12,8 @@ const PhotosharePhoto = require('../models/PhotosharePhoto');
 const r2Service = require('../services/r2.service');
 const geminiService = require('../services/gemini.service');
 
+const DripEnrollment = require('../models/DripEnrollment');
+const DripDeliveryLog = require('../models/DripDeliveryLog');
 const photoshareDebouncers = new Map();
 
 exports.verifyWebhook = (req, res) => {
@@ -253,9 +255,33 @@ async function handleInboundMessage(user, value) {
   const messages = value.messages || [];
   for (const m of messages) {
     const from = m.from;
+    const normalizedFrom = String(from).replace(/\D/g, '');
     const name = value.contacts?.[0]?.profile?.name || '';
     let textBody = '';
     let mediaUrl = '';
+
+    // 1. Resolve Effective Client User (Tenant Attribution)
+    let effectiveUser = user;
+    try {
+      const recentEnrollment = await DripEnrollment.findOne({
+        $or: [{ phone: from }, { phone: normalizedFrom }],
+      }).sort({ updatedAt: -1 });
+
+      if (recentEnrollment) {
+        const clientUser = await User.findById(recentEnrollment.userId).select('+whatsappAccessToken');
+        if (clientUser) effectiveUser = clientUser;
+      } else {
+        const contactMatch = await Contact.findOne({
+          $or: [{ phone: from }, { phone: normalizedFrom }],
+        }).sort({ updatedAt: -1 });
+        if (contactMatch) {
+          const clientUser = await User.findById(contactMatch.userId).select('+whatsappAccessToken');
+          if (clientUser) effectiveUser = clientUser;
+        }
+      }
+    } catch (attrErr) {
+      console.error('[Webhook] Tenant attribution error:', attrErr.message);
+    }
 
     if (m.type === 'text') {
       textBody = m.text?.body || '';
@@ -269,12 +295,12 @@ async function handleInboundMessage(user, value) {
       try {
         const mediaId = m.image?.id;
         if (mediaId) {
-          const downloadRes = await whatsapp.downloadMedia(user._id, mediaId);
+          const downloadRes = await whatsapp.downloadMedia(effectiveUser._id, mediaId);
           const uploadRes = await r2Service.uploadBuffer({
             buffer: downloadRes.buffer,
             filename: `${mediaId}.jpg`,
             mimetype: downloadRes.mimeType,
-            folder: `users/${user._id}/chat`
+            folder: `users/${effectiveUser._id}/chat`
           });
           mediaUrl = uploadRes.url;
         }
@@ -285,10 +311,10 @@ async function handleInboundMessage(user, value) {
       textBody = `[${m.type}]`;
     }
 
-    let conv = await Conversation.findOne({ userId: user._id, customerPhone: from });
+    let conv = await Conversation.findOne({ userId: effectiveUser._id, customerPhone: from });
     if (!conv) {
       conv = await Conversation.create({
-        userId: user._id,
+        userId: effectiveUser._id,
         customerPhone: from,
         customerName: name,
         lastMessage: textBody,
@@ -304,7 +330,7 @@ async function handleInboundMessage(user, value) {
     }
 
     const inbound = await Message.create({
-      userId: user._id,
+      userId: effectiveUser._id,
       conversationId: conv._id,
       direction: 'inbound',
       from,
@@ -316,19 +342,99 @@ async function handleInboundMessage(user, value) {
       whatsappMessageId: m.id || '',
     });
 
-    emitToUser(String(user._id), 'inbox:newMessage', {
+    emitToUser(String(effectiveUser._id), 'inbox:newMessage', {
       conversationId: String(conv._id),
       message: inbound,
     });
-    emitToUser(String(user._id), 'inbox:update', { conversationId: String(conv._id) });
+    emitToUser(String(effectiveUser._id), 'inbox:update', { conversationId: String(conv._id) });
+    // Also notify parent admin if different
+    if (String(effectiveUser._id) !== String(user._id)) {
+      emitToUser(String(user._id), 'inbox:newMessage', {
+        conversationId: String(conv._id),
+        message: inbound,
+      });
+      emitToUser(String(user._id), 'inbox:update', { conversationId: String(conv._id) });
+    }
 
     if (m.id) {
       try {
-        await whatsapp.markMessageRead(user._id, m.id);
+        await whatsapp.markMessageRead(effectiveUser._id, m.id);
       } catch {
         /* ignore */
       }
     }
+
+    // === DRIP CAMPAIGN INBOUND RESOLUTION BEGIN ===
+    try {
+      const activeEnrollments = await DripEnrollment.find({
+        userId: effectiveUser._id,
+        $or: [{ phone: from }, { phone: normalizedFrom }],
+        status: 'active',
+      });
+
+      if (activeEnrollments.length > 0) {
+        const lowerText = (textBody || '').trim().toLowerCase();
+        const isOptOut = ['stop', 'unsubscribe', 'nahi chahiye', 'optout', 'cancel', 'donotreply'].some(
+          (kw) => lowerText === kw || lowerText.startsWith(`${kw} `)
+        );
+
+        if (activeEnrollments.length === 1) {
+          // Single active campaign: direct attribution
+          const enrollment = activeEnrollments[0];
+          if (isOptOut) {
+            enrollment.status = 'opted_out';
+            enrollment.optedOutAt = new Date();
+          } else {
+            enrollment.status = 'converted';
+            enrollment.convertedAt = new Date();
+          }
+          await enrollment.save();
+
+          // Update repliedAt on the most recent delivery log for this enrollment
+          await DripDeliveryLog.findOneAndUpdate(
+            { enrollmentId: enrollment._id },
+            { repliedAt: new Date() },
+            { sort: { sentAt: -1 } }
+          );
+        } else {
+          // Multiple active campaigns: find most recently sent Drip message
+          const recentLog = await DripDeliveryLog.findOne({
+            userId: effectiveUser._id,
+            $or: [{ phone: from }, { phone: normalizedFrom }],
+          }).sort({ sentAt: -1 });
+
+          const matchingEnrollment = recentLog
+            ? activeEnrollments.find((e) => String(e._id) === String(recentLog.enrollmentId))
+            : null;
+
+          if (matchingEnrollment) {
+            if (isOptOut) {
+              matchingEnrollment.status = 'opted_out';
+              matchingEnrollment.optedOutAt = new Date();
+            } else {
+              matchingEnrollment.status = 'converted';
+              matchingEnrollment.convertedAt = new Date();
+            }
+            await matchingEnrollment.save();
+            if (recentLog) {
+              recentLog.repliedAt = new Date();
+              await recentLog.save();
+            }
+          } else {
+            // Ambiguous context: safely pause all active enrollments for this contact and flag for review
+            console.log(`[Drip Webhook] Ambiguous multi-campaign reply from ${from}. Pausing ${activeEnrollments.length} active enrollments for manual review.`);
+            for (const enr of activeEnrollments) {
+              enr.status = 'paused';
+              await enr.save();
+            }
+          }
+        }
+      }
+    } catch (dripInboundErr) {
+      console.error('[Drip Webhook Error] Inbound message processing:', dripInboundErr.message);
+    }
+    // === DRIP CAMPAIGN INBOUND RESOLUTION END ===
+    // === DRIP CAMPAIGN INBOUND RESOLUTION END ===
 
     // === PHOTOSHARE LOGIC BEGIN ===
     let handledByPhotoshare = false;
@@ -494,7 +600,7 @@ async function handleInboundMessage(user, value) {
     // === PHOTOSHARE LOGIC END ===
 
     if (!handledByPhotoshare && (m.type === 'text' || m.type === 'interactive') && textBody && !textBody.startsWith('[')) {
-      await processBot(user._id, conv, textBody);
+      await processBot(effectiveUser._id, conv, textBody);
     }
   }
 }
@@ -532,6 +638,12 @@ async function handleStatusUpdate(user, value) {
         updateFields
       );
     }
+
+    // Also update DripDeliveryLog status if this was a Drip message
+    await DripDeliveryLog.findOneAndUpdate(
+      { metaMessageId: id },
+      { deliveryStatus: st, ...(status === 'failed' ? { errorReason: updateFields.errorReason } : {}) }
+    );
   }
 }
 

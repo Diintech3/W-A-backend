@@ -26,14 +26,18 @@ router.patch('/admin/:templateId', protect, adminOnly, t.adminUpdateTemplate);
 router.delete('/admin/:templateId', protect, adminOnly, t.adminDeleteTemplate);
 router.post('/admin/:templateId/refresh-status', protect, adminOnly, t.adminRefreshStatus);
 router.post('/admin/:templateId/approve-and-submit', protect, adminOnly, t.adminApproveAndSubmit);
+router.post('/admin/:templateId/direct-approve', protect, adminOnly, t.adminDirectApprove);
 
 // ─── Client: apni assigned templates ─────────────────────────────────────────
 router.get('/', protect, clientScope, t.listTemplates);
 router.get('/:id', protect, clientScope, t.getTemplate);
 
-// Client create/edit/delete blocked in controller itself
+// Client create/edit/delete/submit
+const { mediaUpload } = require('../middleware/upload.middleware');
+router.post('/upload-media', protect, mediaUpload.single('file'), t.uploadTemplateMedia);
 router.post('/', protect, clientScope, t.createTemplate);
 router.patch('/:id', protect, clientScope, t.updateTemplate);
+router.post('/:id/submit-to-admin', protect, clientScope, t.submitToAdmin);
 router.delete('/:id', protect, clientScope, t.deleteTemplate);
 
 module.exports = router;

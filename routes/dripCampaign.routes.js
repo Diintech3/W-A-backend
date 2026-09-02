@@ -1,0 +1,32 @@
+const express = require('express');
+const router = express.Router();
+const { protect } = require('../middleware/auth.middleware');
+const clientScope = require('../middleware/clientScope.middleware');
+const dripCtrl = require('../controllers/dripCampaign.controller');
+
+// List and Create
+router.get('/', protect, clientScope, dripCtrl.listDripCampaigns);
+router.post('/manual', protect, clientScope, dripCtrl.createManualCampaign);
+router.post('/ai-generate', protect, clientScope, dripCtrl.generateAiCampaign);
+
+// Detail and Step Editing
+router.get('/:id', protect, clientScope, dripCtrl.getDripCampaign);
+router.put('/:id/step/:stepId', protect, clientScope, dripCtrl.updateStep);
+
+// Lifecycle Controls
+router.post('/:id/activate', protect, clientScope, dripCtrl.activateCampaign);
+router.post('/:id/pause', protect, clientScope, dripCtrl.pauseCampaign);
+router.post('/:id/resume', protect, clientScope, dripCtrl.resumeCampaign);
+router.post('/:id/stop', protect, clientScope, dripCtrl.stopCampaign);
+router.delete('/:id', protect, clientScope, dripCtrl.deleteDripCampaign);
+
+// Testing & Step Simulation
+router.post('/:id/test-step/:stepId', protect, clientScope, dripCtrl.testSendStep);
+router.post('/:id/enrollments/:enrollmentId/dispatch-now', protect, clientScope, dripCtrl.dispatchEnrollmentNow);
+
+// Analytics & Enrollments
+router.get('/:id/analytics', protect, clientScope, dripCtrl.getCampaignAnalytics);
+router.get('/:id/enrollments', protect, clientScope, dripCtrl.listEnrollments);
+router.patch('/:id/enrollments/:enrollmentId', protect, clientScope, dripCtrl.toggleEnrollmentStatus);
+
+module.exports = router;

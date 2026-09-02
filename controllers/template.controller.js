@@ -11,8 +11,27 @@ const {
 // ─── CLIENT: apni assigned templates list ────────────────────────────────────
 exports.listTemplates = async (req, res) => {
   try {
-    // Client: sirf wo templates jo uske liye assign hain (assignedTo = client._id)
     const templates = await Template.find({ assignedTo: req.targetUserId }).sort({ createdAt: -1 });
+
+    // Auto-sync pending templates with Meta in background
+    try {
+      const user = await User.findById(req.targetUserId);
+      const adminId = user?.parentAdmin || req.targetUserId;
+      const metaTemplates = await fetchMetaTemplates(adminId);
+      for (const t of templates) {
+        const match = metaTemplates.find(
+          (m) => m.name.toLowerCase() === (t.whatsappTemplateName || '').toLowerCase()
+        );
+        if (match && match.status !== t.metaStatus) {
+          t.metaStatus = match.status;
+          if (match.id) t.metaTemplateId = match.id;
+          await t.save();
+        }
+      }
+    } catch (syncErr) {
+      console.warn('[Template Controller] Auto-sync with Meta skipped:', syncErr.message);
+    }
+
     return success(res, { templates }, 'Templates');
   } catch (e) {
     return fail(res, e.message || 'Failed to list templates', 500);
@@ -34,7 +53,19 @@ exports.getTemplate = async (req, res) => {
 
 exports.createTemplate = async (req, res) => {
   try {
-    const { name, category, language, bodyText, headerText, footerText, variables } = req.body;
+    const {
+      name,
+      category,
+      language,
+      bodyText,
+      headerText,
+      footerText,
+      variables,
+      headerType,
+      mediaUrl,
+      mediaHandle,
+      buttons,
+    } = req.body;
     if (!name || !bodyText) {
       return fail(res, 'Template name and body text are required', 400);
     }
@@ -44,7 +75,7 @@ exports.createTemplate = async (req, res) => {
     // Check if template exists for client
     const existing = await Template.findOne({
       assignedTo: req.targetUserId,
-      whatsappTemplateName: cleanName
+      whatsappTemplateName: cleanName,
     });
     if (existing) {
       return fail(res, 'Template with this name already exists', 400);
@@ -61,12 +92,16 @@ exports.createTemplate = async (req, res) => {
       category: category || 'MARKETING',
       bodyPreview: bodyText,
       headerText: headerText || '',
+      headerType: headerType || (headerText ? 'TEXT' : 'NONE'),
+      mediaUrl: mediaUrl || '',
+      mediaHandle: mediaHandle || '',
+      buttons: Array.isArray(buttons) ? buttons : [],
       footerText: footerText || '',
       sampleParams: (variables || []).map((v, i) => ({
         key: String(i + 1),
-        value: v.value || v.key || ''
+        value: v.value || v.key || '',
       })),
-      metaStatus: 'PENDING_ADMIN_APPROVAL'
+      metaStatus: 'PENDING_ADMIN_APPROVAL',
     });
 
     return success(res, { template }, 'Template request submitted to Admin successfully', 201);
@@ -76,25 +111,66 @@ exports.createTemplate = async (req, res) => {
 };
 exports.updateTemplate = async (req, res) => {
   try {
-    const template = await Template.findOne({ _id: req.params.id, assignedTo: req.targetUserId });
+    const template = await Template.findOne({
+      _id: req.params.id,
+      $or: [{ assignedTo: req.targetUserId }, { userId: req.targetUserId }],
+    });
     if (!template) return fail(res, 'Template not found', 404);
 
+    // If template is in DRAFT or PENDING_ADMIN_APPROVAL, allow editing full text and category
+    if (['DRAFT', 'PENDING_ADMIN_APPROVAL', 'REJECTED'].includes(template.metaStatus)) {
+      if (req.body.name) template.name = req.body.name.trim();
+      if (req.body.bodyPreview !== undefined || req.body.bodyText !== undefined) {
+        template.bodyPreview = req.body.bodyPreview !== undefined ? req.body.bodyPreview : req.body.bodyText;
+      }
+      if (req.body.category) template.category = req.body.category;
+      if (req.body.languageCode) template.languageCode = req.body.languageCode;
+      if (req.body.sampleParams) template.sampleParams = req.body.sampleParams;
+      if (req.body.headerType) template.headerType = req.body.headerType;
+      if (req.body.headerText !== undefined) template.headerText = req.body.headerText;
+      if (req.body.footerText !== undefined) template.footerText = req.body.footerText;
+      if (req.body.mediaUrl !== undefined) template.mediaUrl = req.body.mediaUrl;
+      if (req.body.buttons !== undefined) template.buttons = req.body.buttons;
+
+      await template.save();
+      return success(res, { template }, 'Template draft updated successfully');
+    }
+
+    // For already approved templates, only allow editing default sample parameters
     if (req.body.sampleParams) {
       template.sampleParams = req.body.sampleParams;
       await template.save();
       return success(res, { template }, 'Template variables updated successfully');
     }
     
-    return fail(res, 'You can only edit variables of a template.', 400);
+    return fail(res, 'Approved templates cannot have their body text edited directly.', 400);
   } catch(e) {
-    return fail(res, e.message || 'Failed to update template variables', 500);
+    return fail(res, e.message || 'Failed to update template', 500);
   }
 };
+
+exports.submitToAdmin = async (req, res) => {
+  try {
+    const template = await Template.findOne({
+      _id: req.params.id,
+      $or: [{ assignedTo: req.targetUserId }, { userId: req.targetUserId }],
+    });
+    if (!template) return fail(res, 'Template not found', 404);
+
+    template.metaStatus = 'PENDING_ADMIN_APPROVAL';
+    await template.save();
+
+    return success(res, { template }, 'Template submitted to Admin for Meta approval');
+  } catch (e) {
+    return fail(res, e.message || 'Failed to submit template to admin', 500);
+  }
+};
+
 exports.deleteTemplate = async (req, res) => {
   try {
     const t = await Template.findOneAndDelete({ 
       _id: req.params.id, 
-      assignedTo: req.targetUserId 
+      $or: [{ assignedTo: req.targetUserId }, { userId: req.targetUserId }],
     });
     if (!t) return fail(res, 'Template not found or not yours to delete', 404);
     return success(res, null, 'Template deleted successfully');
@@ -124,6 +200,24 @@ exports.adminListClientTemplates = async (req, res) => {
     if (!client) return fail(res, 'Client not found or not accessible', 404);
 
     const templates = await Template.find({ assignedTo: clientId }).sort({ createdAt: -1 });
+
+    // Auto-sync pending templates with Meta in background
+    try {
+      const metaTemplates = await fetchMetaTemplates(req.user._id);
+      for (const t of templates) {
+        const match = metaTemplates.find(
+          (m) => m.name.toLowerCase() === (t.whatsappTemplateName || '').toLowerCase()
+        );
+        if (match && match.status !== t.metaStatus) {
+          t.metaStatus = match.status;
+          if (match.id) t.metaTemplateId = match.id;
+          await t.save();
+        }
+      }
+    } catch (syncErr) {
+      console.warn('[Template Controller] Admin auto-sync with Meta skipped:', syncErr.message);
+    }
+
     return success(res, { templates }, `Templates for ${client.name}`);
   } catch (e) {
     return fail(res, e.message || 'Failed to list client templates', 500);
@@ -345,7 +439,8 @@ exports.adminRefreshStatus = async (req, res) => {
     const template = await Template.findOne({ _id: req.params.templateId });
     if (!template) return fail(res, 'Template not found', 404);
 
-    const result = await refreshTemplateStatus(template.assignedTo || req.user._id, template.whatsappTemplateName);
+    const adminId = template.userId || req.user._id;
+    const result = await refreshTemplateStatus(adminId, template.whatsappTemplateName);
     if (result.found) {
       template.metaStatus = result.status;
       await template.save();
@@ -364,8 +459,9 @@ exports.adminRefreshStatus = async (req, res) => {
 exports.adminRefreshAllStatus = async (req, res) => {
   try {
     const { clientId } = req.params;
+    const adminId = req.user._id;
     const templates = await Template.find({ assignedTo: clientId });
-    const metaTemplates = await fetchMetaTemplates(clientId);
+    const metaTemplates = await fetchMetaTemplates(adminId);
 
     let updated = 0;
     for (const t of templates) {
@@ -514,7 +610,8 @@ exports.adminApproveAndSubmit = async (req, res) => {
           const metaNum = index + 1;
           const regex = new RegExp(`\\{\\{${num}\\}\\}`, 'g');
           finalBodyText = finalBodyText.replace(regex, `{{${metaNum}}}`);
-          bodyParams.push(sampleParams[varIndex]?.value || `sample_${metaNum}`);
+          const val = sampleParams.find(p => String(p.key) === String(num) || String(p.key) === String(metaNum))?.value || sampleParams[varIndex]?.value || (index === 0 ? 'Rahul' : `Sample ${metaNum}`);
+          bodyParams.push(val);
           varIndex++;
         });
       }
@@ -526,8 +623,12 @@ exports.adminApproveAndSubmit = async (req, res) => {
       category: template.category || 'MARKETING',
       language: template.languageCode || 'en',
       bodyText: finalBodyText,
+      headerType: template.headerType || (finalHeaderText ? 'TEXT' : 'NONE'),
       headerText: finalHeaderText,
       footerText: template.footerText || '',
+      mediaUrl: template.mediaUrl || '',
+      mediaHandle: template.mediaHandle || '',
+      buttons: Array.isArray(template.buttons) ? template.buttons : [],
       headerVariables: headerParams,
       bodyVariables: bodyParams,
     });
@@ -549,3 +650,61 @@ exports.adminApproveAndSubmit = async (req, res) => {
     return fail(res, msg, status);
   }
 };
+
+/**
+ * POST /api/templates/admin/:templateId/direct-approve
+ * Admin directly marks a template as APPROVED (for local/testing or pre-approved templates)
+ */
+exports.adminDirectApprove = async (req, res) => {
+  try {
+    const { templateId } = req.params;
+    const template = await Template.findOne({
+      _id: templateId,
+      $or: [{ userId: req.user._id }, { createdByAdmin: req.user._id }],
+    });
+
+    if (!template) {
+      return fail(res, 'Template not found or not owned by you', 404);
+    }
+
+    template.metaStatus = 'APPROVED';
+    await template.save();
+
+    return success(res, { template, metaStatus: 'APPROVED' }, 'Template directly marked as APPROVED');
+  } catch (e) {
+    return fail(res, e.message || 'Failed to directly approve template', 500);
+  }
+};
+
+/**
+ * POST /api/templates/upload-media
+ * Upload template header graphic/image to Cloudflare R2 or return base64/URL
+ */
+exports.uploadTemplateMedia = async (req, res) => {
+  try {
+    if (!req.file) {
+      return fail(res, 'No file uploaded', 400);
+    }
+
+    let mediaUrl = '';
+    try {
+      const r2Service = require('../services/r2.service');
+      const uploaded = await r2Service.uploadBuffer({
+        buffer: req.file.buffer,
+        filename: req.file.originalname,
+        mimetype: req.file.mimetype,
+        folder: 'templates',
+      });
+      mediaUrl = uploaded.url;
+    } catch (r2Err) {
+      const base64 = req.file.buffer.toString('base64');
+      mediaUrl = `data:${req.file.mimetype};base64,${base64}`;
+    }
+
+    return success(res, { url: mediaUrl }, 'Media uploaded successfully');
+  } catch (err) {
+    return fail(res, err.message || 'Failed to upload media', 500);
+  }
+};
+
+

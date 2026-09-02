@@ -8,12 +8,14 @@ const connectDB = require('./config/db');
 const { errorHandler, notFound } = require('./middleware/error.middleware');
 const { initSocket } = require('./services/socket.service');
 const { initScheduler } = require('./services/scheduler.service');
+const { initDripScheduler } = require('./services/dripScheduler.service');
 const { info, error } = require('./utils/logger');
 const clientScope = require('./middleware/clientScope.middleware');
 
 const authRoutes = require('./routes/auth.routes');
 const contactRoutes = require('./routes/contact.routes');
 const campaignRoutes = require('./routes/campaign.routes');
+const dripCampaignRoutes = require('./routes/dripCampaign.routes');
 const messageRoutes = require('./routes/message.routes');
 const templateRoutes = require('./routes/template.routes');
 const botRoutes = require('./routes/bot.routes');
@@ -101,6 +103,7 @@ app.post('/api/settings/ai-agent', protect, clientScope, authController.saveAIAg
 app.get('/api/settings/ai-agent', protect, clientScope, authController.getAIAgentId);
 app.use('/api/contacts', contactRoutes);
 app.use('/api/campaigns', campaignRoutes);
+app.use('/api/drip-campaigns', dripCampaignRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/templates', templateRoutes);
 app.use('/api/bot', botRoutes);
@@ -218,6 +221,7 @@ async function bootstrap() {
     server.listen(PORT, () => {
       info(`Server is running on port ${PORT}`);
       initScheduler();
+      initDripScheduler();
     });
   } catch (e) {
     error('Fatal startup error', { reason: e.message });
@@ -226,4 +230,3 @@ async function bootstrap() {
 }
 
 bootstrap();
-// trigger restart 5

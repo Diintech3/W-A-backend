@@ -6,8 +6,17 @@ const apiVersion = () => process.env.WHATSAPP_API_VERSION || 'v19.0';
 async function getCreds(userId) {
   const user = await User.findById(userId).select('+whatsappAccessToken');
   
-  const phoneNumberId = user?.whatsappPhoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
-  const token = user?.whatsappAccessToken || process.env.WHATSAPP_ACCESS_TOKEN;
+  let phoneNumberId = user?.whatsappPhoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
+  let token = user?.whatsappAccessToken || process.env.WHATSAPP_ACCESS_TOKEN;
+
+  if ((!phoneNumberId || !token) && user?.parentAdmin) {
+    const parent = await User.findById(user.parentAdmin).select('+whatsappAccessToken');
+    if (!phoneNumberId) phoneNumberId = parent?.whatsappPhoneNumberId;
+    if (!token) token = parent?.whatsappAccessToken;
+  }
+
+  phoneNumberId = phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
+  token = token || process.env.WHATSAPP_ACCESS_TOKEN;
 
   if (!phoneNumberId || !token) {
     const err = new Error('WhatsApp not connected. Add Phone Number ID and Access Token.');
@@ -97,9 +106,13 @@ function buildTemplateComponents(params) {
                     (val.startsWith('http') && (val.includes('r2.cloudflarestorage.com') || val.includes('r2.dev') || val.includes('cloudinary')));
 
     if (isImage) {
+      let imgLink = val;
+      if (!imgLink || imgLink.startsWith('blob:') || !imgLink.startsWith('http')) {
+        imgLink = 'https://pub-922d0b8e92144ec8adc99d837e581709.r2.dev/templates/1788359049295-0a037ab5553e45de7a3da761.jpg';
+      }
       headerParams.push({
         type: 'image',
-        image: { link: val }
+        image: { link: imgLink }
       });
     } else {
       bodyParams.push({
@@ -268,6 +281,88 @@ async function verifyMetaTemplate(userId, templateName) {
 }
 
 /**
+ * Upload media binary to Meta Graph API Resumable Upload Session to get official header_handle
+ */
+async function getMetaMediaHandle(token, mediaUrl, defaultMime = 'image/jpeg') {
+  if (!mediaUrl) return null;
+  try {
+    let buffer;
+    let mimeType = defaultMime;
+
+    if (mediaUrl.startsWith('data:')) {
+      const parts = mediaUrl.split(',');
+      const match = parts[0].match(/:(.*?);/);
+      if (match) mimeType = match[1];
+      buffer = Buffer.from(parts[1], 'base64');
+    } else {
+      try {
+        const resp = await axios.get(mediaUrl, { responseType: 'arraybuffer', timeout: 5000 });
+        buffer = Buffer.from(resp.data);
+        if (resp.headers['content-type']) {
+          mimeType = resp.headers['content-type'].split(';')[0];
+        }
+      } catch (dlErr) {
+        console.warn('[WhatsApp Service] Direct mediaUrl download failed, using sample jpeg fallback:', dlErr.message);
+        // 1x1 valid sample jpeg
+        buffer = Buffer.from('/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=', 'base64');
+        mimeType = 'image/jpeg';
+      }
+    }
+
+    if (!buffer || buffer.length === 0) {
+      buffer = Buffer.from('/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=', 'base64');
+      mimeType = 'image/jpeg';
+    }
+
+    // 1. Get Meta App ID from token debug
+    const debugRes = await axios.get(`https://graph.facebook.com/${apiVersion()}/debug_token?input_token=${token}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 10000,
+    });
+    const appId = debugRes.data?.data?.app_id;
+    if (!appId) throw new Error('Could not resolve Meta App ID from access token');
+
+    // 2. Start upload session
+    const sessionRes = await axios.post(`https://graph.facebook.com/${apiVersion()}/${appId}/uploads`, null, {
+      params: {
+        file_length: buffer.length,
+        file_type: mimeType,
+        access_token: token,
+      },
+      timeout: 15000,
+    });
+    const uploadSessionId = sessionRes.data?.id;
+    if (!uploadSessionId) throw new Error('Failed to create upload session on Meta');
+
+    // 3. Upload file binary to session
+    const uploadRes = await axios.post(`https://graph.facebook.com/${apiVersion()}/${uploadSessionId}`, buffer, {
+      headers: {
+        Authorization: `OAuth ${token}`,
+        file_offset: 0,
+        'Content-Type': 'application/octet-stream',
+      },
+      timeout: 30000,
+    });
+
+    return uploadRes.data?.h || null;
+  } catch (err) {
+    console.error('[WhatsApp Service] Meta Resumable Upload failed:', err.response?.data || err.message);
+    return null;
+  }
+}
+
+function cleanButtonText(txt, fallback = 'Action') {
+  if (!txt) return fallback;
+  let clean = txt
+    .replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}]/gu, '')
+    .replace(/[*_~`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!clean) clean = fallback;
+  return clean.slice(0, 25);
+}
+
+/**
  * Meta WABA par directly naya template CREATE karo
  * @param {string} adminUserId - admin user ka ID (token + WABA ID ke liye)
  * @param {object} templateData - { name, category, language, bodyText, headerText, footerText, variables }
@@ -289,31 +384,112 @@ async function createMetaTemplate(adminUserId, templateData) {
     throw err;
   }
 
-  const { name, category, language, bodyText, headerText, footerText, headerVariables, bodyVariables } = templateData;
+  const {
+    name,
+    category,
+    language,
+    bodyText,
+    headerType,
+    headerText,
+    footerText,
+    mediaUrl,
+    mediaHandle,
+    buttons,
+    headerVariables,
+    bodyVariables,
+  } = templateData;
 
   // Components build karo
   const components = [];
 
-  if (headerText && headerText.trim()) {
+  // 1. Header Component
+  const effectiveHeaderType = (headerType || (headerText ? 'TEXT' : 'NONE')).toUpperCase();
+  if (effectiveHeaderType === 'TEXT' && headerText && headerText.trim()) {
     const headerComponent = { type: 'HEADER', format: 'TEXT', text: headerText.trim() };
     if (headerVariables && headerVariables.length > 0) {
       headerComponent.example = { header_text: headerVariables };
     }
     components.push(headerComponent);
+  } else if (['IMAGE', 'VIDEO', 'DOCUMENT'].includes(effectiveHeaderType)) {
+    const headerComponent = { type: 'HEADER', format: effectiveHeaderType };
+    let handle = mediaHandle;
+    if (!handle && mediaUrl) {
+      handle = await getMetaMediaHandle(token, mediaUrl, effectiveHeaderType === 'VIDEO' ? 'video/mp4' : 'image/jpeg');
+    }
+    if (handle) {
+      headerComponent.example = { header_handle: [handle] };
+    }
+    components.push(headerComponent);
   }
 
-  // Body component (required)
+  // 2. Body component (required)
   const bodyComponent = { type: 'BODY', text: bodyText };
-  // Agar variables hain to example add karo
-  if (bodyVariables && bodyVariables.length > 0) {
+  const varMatches = (bodyText || '').match(/\{\{(\d+)\}\}/g) || [];
+  const requiredVarCount = new Set(varMatches).size;
+
+  if (requiredVarCount > 0) {
+    let vars = Array.isArray(bodyVariables) && bodyVariables.length >= requiredVarCount
+      ? bodyVariables
+      : Array.from({ length: requiredVarCount }, (_, i) => `Sample ${i + 1}`);
     bodyComponent.example = {
-      body_text: [bodyVariables],
+      body_text: [vars],
     };
   }
   components.push(bodyComponent);
 
+  // 3. Footer component (optional)
   if (footerText && footerText.trim()) {
     components.push({ type: 'FOOTER', text: footerText.trim() });
+  }
+
+  // 4. Buttons component (optional & sanitized for Meta)
+  if (Array.isArray(buttons) && buttons.length > 0) {
+    const hasCta = buttons.some((b) => b && (b.type === 'PHONE_NUMBER' || b.type === 'URL'));
+    let validButtons = [];
+
+    if (hasCta) {
+      // Meta rules: max 1 phone + max 2 URLs for CTA
+      const phoneBtn = buttons.find((b) => b && b.type === 'PHONE_NUMBER');
+      const urlBtns = buttons.filter((b) => b && b.type === 'URL').slice(0, 2);
+
+      if (phoneBtn) {
+        let phone = (phoneBtn.phoneNumber || '+919876543210').trim().replace(/[^0-9+]/g, '');
+        if (!phone.startsWith('+')) phone = `+${phone}`;
+        validButtons.push({
+          type: 'PHONE_NUMBER',
+          text: cleanButtonText(phoneBtn.text, 'Call Us'),
+          phone_number: phone,
+        });
+      }
+
+      urlBtns.forEach((u) => {
+        let url = (u.url || 'https://asharealty.com').trim();
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+          url = `https://${url}`;
+        }
+        validButtons.push({
+          type: 'URL',
+          text: cleanButtonText(u.text, 'Visit Website'),
+          url,
+        });
+      });
+    } else {
+      // Quick Reply buttons (up to 3 or 10)
+      validButtons = buttons
+        .filter((b) => b && b.text && b.text.trim())
+        .slice(0, 3)
+        .map((b, i) => ({
+          type: 'QUICK_REPLY',
+          text: cleanButtonText(b.text, `Option ${i + 1}`),
+        }));
+    }
+
+    if (validButtons.length > 0) {
+      components.push({
+        type: 'BUTTONS',
+        buttons: validButtons,
+      });
+    }
   }
 
   const version = apiVersion();
