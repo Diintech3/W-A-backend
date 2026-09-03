@@ -105,11 +105,12 @@ function resolveTemplateVariables(contact, variableMapping = [], template) {
   const params = [];
   const mappings = Array.isArray(variableMapping) ? variableMapping : [];
 
-  // If template has an IMAGE header, add header_image param first
+  // 1. If template has an IMAGE header, add header_image param
   if ((template?.headerType === 'IMAGE' || template?.mediaType === 'image')) {
-    let imgUrl = template.mediaUrl;
+    const sampleHeader = template.sampleParams?.find(p => p.key === 'header_image')?.value;
+    let imgUrl = sampleHeader || template.mediaUrl;
     if (!imgUrl || imgUrl.startsWith('blob:') || !imgUrl.startsWith('http')) {
-      imgUrl = 'https://pub-922d0b8e92144ec8adc99d837e581709.r2.dev/templates/1788359049295-0a037ab5553e45de7a3da761.jpg';
+      imgUrl = 'https://www.lakshmiraj.com/assets/volunteer-WDd9K1Rb.png';
     }
     params.push({
       type: 'image',
@@ -120,44 +121,49 @@ function resolveTemplateVariables(contact, variableMapping = [], template) {
     });
   }
 
-  for (const mapItem of mappings) {
-    const source = mapItem.source || 'contact.name';
-    const fallback = mapItem.fallback || '';
-    let val = '';
+  // 2. Count actual body variables in template text (e.g. {{1}}, {{2}})
+  const textToScan = (template?.bodyPreview || template?.body || template?.content || '');
+  const matches = textToScan.match(/\{\{(\d+)\}\}/g) || [];
+  const bodyVarNumbers = [...new Set(matches.map(m => m.replace(/[{}]/g, '')))].sort((a, b) => Number(a) - Number(b));
+  const expectedBodyVarCount = bodyVarNumbers.length;
 
-    if (source === 'contact.name') {
-      val = contact?.name || fallback;
-    } else if (source === 'contact.phone') {
-      val = contact?.phone || fallback;
-    } else if (source === 'contact.email') {
-      val = contact?.email || fallback;
-    } else if (source.startsWith('tag:') && contact?.tags?.length) {
-      val = contact.tags[0] || fallback;
-    } else {
-      val = fallback || contact?.name || 'Customer';
-    }
+  if (expectedBodyVarCount > 0) {
+    // Filter sampleParams to only numeric/body keys (exclude 'header_image')
+    const sampleBodyParams = (template?.sampleParams || []).filter(p => p.key !== 'header_image' && !isNaN(Number(p.key)));
 
-    params.push({
-      type: 'text',
-      text: String(val).trim(),
-      parameter_name: String(mapItem.position || params.length + 1),
-      key: String(mapItem.position || params.length + 1),
-      value: String(val).trim(),
-    });
-  }
+    for (let i = 0; i < expectedBodyVarCount; i++) {
+      const varNum = bodyVarNumbers[i];
+      const mapItem = mappings.find(m => String(m.position) === String(varNum) || String(m.position) === String(i + 1));
+      const sampleItem = sampleBodyParams.find(p => String(p.key) === String(varNum) || String(p.key) === String(i + 1));
 
-  // If no variable mapping was explicitly configured but template has sampleParams
-  const nonImageCount = params.filter(p => p.parameter_name !== 'header_image').length;
-  if (nonImageCount === 0 && template?.sampleParams?.length > 0) {
-    template.sampleParams.forEach((s, idx) => {
+      let val = '';
+      if (mapItem) {
+        const source = mapItem.source || 'contact.name';
+        const fallback = mapItem.fallback || '';
+        if (source === 'contact.name') val = contact?.name || fallback;
+        else if (source === 'contact.phone') val = contact?.phone || fallback;
+        else if (source === 'contact.email') val = contact?.email || fallback;
+        else if (source.startsWith('tag:') && contact?.tags?.length) val = contact.tags[0] || fallback;
+        else val = fallback || contact?.name || 'Friend';
+      } else if (sampleItem && sampleItem.value) {
+        // If 1st variable, prefer contact name if sample is generic, else use sample value
+        if (i === 0 && contact?.name && !sampleItem.value.startsWith('http')) {
+          val = contact.name;
+        } else {
+          val = sampleItem.value;
+        }
+      } else {
+        val = i === 0 ? (contact?.name || 'Friend') : '';
+      }
+
       params.push({
         type: 'text',
-        text: idx === 0 ? (contact?.name || 'Friend') : (s.value || ''),
-        parameter_name: String(idx + 1),
-        key: String(idx + 1),
-        value: idx === 0 ? (contact?.name || 'Friend') : (s.value || ''),
+        text: String(val).trim(),
+        parameter_name: String(varNum),
+        key: String(varNum),
+        value: String(val).trim(),
       });
-    });
+    }
   }
 
   return params;
