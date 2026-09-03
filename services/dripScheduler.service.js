@@ -531,6 +531,38 @@ function calculateStepDueAt(baselineDate, step, defaultTime = '10:00', tz = 'Asi
     return new Date(base.getTime() + hrs * 3600 * 1000);
   }
 
+  if (unit === 'months') {
+    try {
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: tz || 'Asia/Kolkata',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      });
+      const ymd = formatter.format(base);
+      const [y, m, d] = ymd.split('-').map(Number);
+      const monthsToAdd = isFirstStep ? (val <= 1 ? 0 : val - 1) : Math.max(1, val);
+      const monthBase = new Date(Date.UTC(y, m - 1 + monthsToAdd, d, 12, 0, 0));
+      const targetY = monthBase.getUTCFullYear();
+      const targetM = monthBase.getUTCMonth() + 1;
+      const targetD = monthBase.getUTCDate();
+
+      const timeStr = step.sendTime || defaultTime || '10:00';
+      let hours = 10;
+      let minutes = 0;
+      if (timeStr && timeStr.includes(':')) {
+        const [h, min] = timeStr.split(':').map(Number);
+        if (!isNaN(h) && !isNaN(min)) {
+          hours = h;
+          minutes = min;
+        }
+      }
+      return createDateInTimezone(targetY, targetM, targetD, hours, minutes, tz);
+    } catch (e) {
+      return new Date(base.getTime() + val * 30 * 24 * 3600 * 1000);
+    }
+  }
+
   // unit === 'days'
   try {
     const formatter = new Intl.DateTimeFormat('en-CA', {
