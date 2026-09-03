@@ -11,6 +11,7 @@ const dripCampaignSchema = new mongoose.Schema(
     preferredSendTime: { type: String, default: '10:00' }, // HH:mm format, e.g. "10:30"
     pausedAt: { type: Date, default: null },
     stoppedAt: { type: Date, default: null },
+    completedAt: { type: Date, default: null },
     audienceGroupId: { type: mongoose.Schema.Types.ObjectId, ref: 'ContactGroup', required: true, index: true },
     status: {
       type: String,

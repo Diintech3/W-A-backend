@@ -424,6 +424,22 @@ async function runDripSchedulerCycle() {
           );
         } else {
           enrollment.status = 'completed';
+          await enrollment.save();
+
+          // Check if ALL enrollments for this campaign are now completed
+          const remainingUnfinished = await DripEnrollment.countDocuments({
+            campaignId: enrollment.campaignId,
+            status: { $in: ['active', 'paused', 'scheduled'] },
+          });
+
+          if (remainingUnfinished === 0) {
+            await DripCampaign.findByIdAndUpdate(enrollment.campaignId, {
+              status: 'completed',
+              completedAt: new Date(),
+              stoppedAt: new Date(),
+            });
+            info(`[Drip Scheduler] Campaign ${enrollment.campaignId} auto-completed (all steps finished for all contacts)`);
+          }
         }
 
         await enrollment.save();

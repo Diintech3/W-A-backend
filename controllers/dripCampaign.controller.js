@@ -62,7 +62,7 @@ exports.listDripCampaigns = async (req, res) => {
   }
 };
 
-// ─── Get Single Drip Campaign with Steps ──────────────────────────────────────
+// ─── Get Single Drip Campaign with Steps & Live Progress Metrics ──────────────
 exports.getDripCampaign = async (req, res) => {
   try {
     const userId = req.targetUserId || req.user._id;
@@ -77,7 +77,76 @@ exports.getDripCampaign = async (req, res) => {
       .populate('templateId', 'name whatsappTemplateName category metaStatus bodyPreview headerType sampleParams')
       .sort({ order: 1 });
 
-    return success(res, { campaign, steps }, 'Campaign details retrieved');
+    // 1. Fetch enrollments & delivery logs for live progress tracking
+    const enrollments = await DripEnrollment.find({ campaignId: campaign._id }).lean();
+    const logs = await DripDeliveryLog.find({ campaignId: campaign._id }).lean();
+
+    const totalEnrolled = enrollments.length;
+    const completedEnrollments = enrollments.filter((e) => e.status === 'completed').length;
+    const activeEnrollments = enrollments.filter((e) => e.status === 'active').length;
+    const pausedEnrollments = enrollments.filter((e) => e.status === 'paused').length;
+
+    // Auto-complete campaign if all contacts finished
+    if (totalEnrolled > 0 && completedEnrollments === totalEnrolled && campaign.status !== 'completed') {
+      campaign.status = 'completed';
+      campaign.completedAt = campaign.completedAt || new Date();
+      campaign.stoppedAt = campaign.stoppedAt || new Date();
+      await campaign.save();
+    }
+
+    // 2. Compute per-step progress
+    const enrichedSteps = steps.map((s, idx) => {
+      const stepObj = s.toObject();
+      const stepLogs = logs.filter((l) => String(l.stepId) === String(s._id));
+      
+      const sentCount = stepLogs.filter((l) => ['sent', 'delivered', 'read'].includes(l.deliveryStatus)).length;
+      const deliveredCount = stepLogs.filter((l) => ['delivered', 'read'].includes(l.deliveryStatus)).length;
+      const readCount = stepLogs.filter((l) => l.deliveryStatus === 'read').length;
+      const failedCount = stepLogs.filter((l) => l.deliveryStatus === 'failed').length;
+
+      const lastLog = stepLogs.sort((a, b) => new Date(b.sentAt || 0) - new Date(a.sentAt || 0))[0];
+
+      // A step is completed if at least all enrolled contacts have been sent
+      const isCompleted = totalEnrolled > 0 ? sentCount >= totalEnrolled : false;
+      const isCurrent = !isCompleted && enrollments.some((e) => e.currentStepIndex === idx && ['active', 'paused'].includes(e.status));
+      const isPending = !isCompleted && !isCurrent;
+
+      return {
+        ...stepObj,
+        progress: {
+          sentCount,
+          deliveredCount,
+          readCount,
+          failedCount,
+          lastSentAt: lastLog?.sentAt || null,
+          isCompleted,
+          isCurrent,
+          isPending,
+          completionPercent: totalEnrolled > 0 ? Math.min(100, Math.round((sentCount / totalEnrolled) * 100)) : 0,
+        },
+      };
+    });
+
+    // 3. Campaign-level step progress summary
+    const completedStepsCount = enrichedSteps.filter((s) => s.progress?.isCompleted).length;
+    const remainingStepsCount = Math.max(0, enrichedSteps.length - completedStepsCount);
+    const overallProgressPercent = enrichedSteps.length > 0
+      ? Math.round((completedStepsCount / enrichedSteps.length) * 100)
+      : 0;
+
+    const progressSummary = {
+      totalSteps: enrichedSteps.length,
+      completedStepsCount,
+      remainingStepsCount,
+      overallProgressPercent,
+      totalEnrolled,
+      completedEnrollments,
+      activeEnrollments,
+      pausedEnrollments,
+      isFullyCompleted: campaign.status === 'completed' || (totalEnrolled > 0 && completedStepsCount === enrichedSteps.length),
+    };
+
+    return success(res, { campaign, steps: enrichedSteps, progressSummary }, 'Campaign details retrieved');
   } catch (err) {
     return fail(res, err.message || 'Failed to get campaign details', 500);
   }
