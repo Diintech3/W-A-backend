@@ -17,13 +17,15 @@ router.put('/:id/step/:stepId', protect, clientScope, dripCtrl.updateStep);
 
 // Lifecycle Controls
 router.post('/:id/activate', protect, clientScope, dripCtrl.activateCampaign);
+router.post('/:id/start', protect, clientScope, dripCtrl.activateCampaign);
 router.post('/:id/pause', protect, clientScope, dripCtrl.pauseCampaign);
 router.post('/:id/resume', protect, clientScope, dripCtrl.resumeCampaign);
 router.post('/:id/stop', protect, clientScope, dripCtrl.stopCampaign);
 router.delete('/:id', protect, clientScope, dripCtrl.deleteDripCampaign);
 
-// Testing & Step Simulation
+// Testing, Simulation & Inbox Enrollment
 router.post('/:id/test-step/:stepId', protect, clientScope, dripCtrl.testSendStep);
+router.post('/:id/enroll-contact', protect, clientScope, dripCtrl.enrollSingleContact);
 router.post('/:id/enrollments/:enrollmentId/dispatch-now', protect, clientScope, dripCtrl.dispatchEnrollmentNow);
 
 // Analytics & Enrollments

@@ -1042,3 +1042,62 @@ exports.updateDripCampaign = async (req, res) => {
   }
 };
 
+// ─── Enroll Single Contact into Drip Campaign (from Inbox / Contacts) ─────────
+exports.enrollSingleContact = async (req, res) => {
+  try {
+    const userId = req.targetUserId || req.user._id;
+    const campaign = await DripCampaign.findOne({ _id: req.params.id, userId });
+    if (!campaign) {
+      return fail(res, 'Drip campaign not found', 404);
+    }
+
+    const { contactId, phone } = req.body;
+    let targetPhone = phone;
+    let targetContactId = contactId;
+
+    if (contactId && !targetPhone) {
+      const contact = await Contact.findById(contactId);
+      if (contact) targetPhone = contact.phone;
+    } else if (targetPhone && !contactId) {
+      const contact = await Contact.findOne({ userId, phone: targetPhone });
+      if (contact) targetContactId = contact._id;
+    }
+
+    if (!targetPhone) {
+      return fail(res, 'Contact ID or Phone is required for enrollment', 400);
+    }
+
+    targetPhone = normalizePhone(targetPhone) || String(targetPhone).replace(/\D/g, '');
+
+    const steps = await DripStep.find({ campaignId: campaign._id }).sort({ order: 1 });
+    if (!steps.length) {
+      return fail(res, 'Cannot enroll: Campaign has no steps configured', 400);
+    }
+
+    const user = await User.findById(userId).select('businessHours');
+    const userTz = user?.businessHours?.timezone || 'Asia/Kolkata';
+    const firstStep = steps[0];
+    const initialDueAt = calculateStepDueAt(new Date(), firstStep, campaign.preferredSendTime || '10:00', userTz, true);
+
+    const enrollment = await DripEnrollment.findOneAndUpdate(
+      { userId, campaignId: campaign._id, phone: targetPhone },
+      {
+        $set: {
+          contactId: targetContactId,
+          currentStepIndex: 0,
+          status: 'active',
+          enrolledAt: new Date(),
+          nextDueAt: initialDueAt,
+          isProcessing: false,
+          retryCount: 0,
+        }
+      },
+      { upsert: true, new: true }
+    );
+
+    return success(res, { enrollment }, `Contact +${targetPhone} enrolled into "${campaign.name}" successfully!`);
+  } catch (err) {
+    return fail(res, err.message || 'Failed to enroll contact', 500);
+  }
+};
+
