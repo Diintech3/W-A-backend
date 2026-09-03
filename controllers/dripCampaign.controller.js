@@ -373,7 +373,8 @@ exports.activateCampaign = async (req, res) => {
       baselineDate,
       firstStep,
       campaign.preferredSendTime || '10:00',
-      userTz
+      userTz,
+      true
     );
 
     // 3. Batch insert enrollments (1,000 at a time with { ordered: false })
@@ -786,11 +787,10 @@ exports.dispatchEnrollmentNow = async (req, res) => {
     const nextStep = steps[enrollment.currentStepIndex + 1];
     if (nextStep) {
       enrollment.currentStepIndex += 1;
-      const isMinuteOrHour = ['minutes', 'hours'].includes(nextStep.offsetUnit);
-      const nextBase = isMinuteOrHour ? (enrollment.lastSentAt || new Date()) : enrollment.enrolledAt;
+      const nextBase = enrollment.lastSentAt || new Date();
       const user = await User.findById(userId).select('businessHours');
       const userTz = user?.businessHours?.timezone || 'Asia/Kolkata';
-      enrollment.nextDueAt = calculateStepDueAt(nextBase, nextStep, campaign.preferredSendTime || '10:00', userTz);
+      enrollment.nextDueAt = calculateStepDueAt(nextBase, nextStep, campaign.preferredSendTime || '10:00', userTz, false);
     } else {
       enrollment.status = 'completed';
     }

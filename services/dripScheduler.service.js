@@ -413,10 +413,15 @@ async function runDripSchedulerCycle() {
         const nextStep = steps[enrollment.currentStepIndex + 1];
         if (nextStep) {
           enrollment.currentStepIndex += 1;
-          const isMinuteOrHour = ['minutes', 'hours'].includes(nextStep.offsetUnit);
-          const nextBase = isMinuteOrHour ? (enrollment.lastSentAt || new Date()) : enrollment.enrolledAt;
+          const nextBase = enrollment.lastSentAt || new Date();
           const userTz = owner?.businessHours?.timezone || 'Asia/Kolkata';
-          enrollment.nextDueAt = calculateStepDueAt(nextBase, nextStep, parentCampaign?.preferredSendTime || '10:00', userTz);
+          enrollment.nextDueAt = calculateStepDueAt(
+            nextBase,
+            nextStep,
+            parentCampaign?.preferredSendTime || '10:00',
+            userTz,
+            false
+          );
         } else {
           enrollment.status = 'completed';
         }
@@ -493,19 +498,21 @@ function createDateInTimezone(year, month, day, hours, minutes, timezone = 'Asia
   return new Date(provisionalUtc.getTime() - offsetMinutes * 60000);
 }
 
-function calculateStepDueAt(baselineDate, step, defaultTime = '10:00', tz = 'Asia/Kolkata') {
+function calculateStepDueAt(baselineDate, step, defaultTime = '10:00', tz = 'Asia/Kolkata', isFirstStep = false) {
   const base = new Date(baselineDate || Date.now());
   const unit = step.offsetUnit || 'days';
   const val = Number(step.offsetValue !== undefined ? step.offsetValue : (step.dayOffset ?? 1));
 
   if (unit === 'minutes') {
-    if (val <= 0) return new Date();
-    return new Date(base.getTime() + val * 60 * 1000);
+    if (isFirstStep && val <= 0) return new Date();
+    const mins = isFirstStep ? val : Math.max(1, val);
+    return new Date(base.getTime() + mins * 60 * 1000);
   }
 
   if (unit === 'hours') {
-    if (val <= 0) return new Date();
-    return new Date(base.getTime() + val * 3600 * 1000);
+    if (isFirstStep && val <= 0) return new Date();
+    const hrs = isFirstStep ? val : Math.max(1, val);
+    return new Date(base.getTime() + hrs * 3600 * 1000);
   }
 
   // unit === 'days'
@@ -519,7 +526,7 @@ function calculateStepDueAt(baselineDate, step, defaultTime = '10:00', tz = 'Asi
     const ymd = formatter.format(base);
     const [y, m, d] = ymd.split('-').map(Number);
 
-    const daysToAdd = val <= 1 ? 0 : val - 1;
+    const daysToAdd = isFirstStep ? (val <= 1 ? 0 : val - 1) : Math.max(1, val);
     const dayBase = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
     dayBase.setUTCDate(dayBase.getUTCDate() + daysToAdd);
 
@@ -540,14 +547,14 @@ function calculateStepDueAt(baselineDate, step, defaultTime = '10:00', tz = 'Asi
 
     const targetDate = createDateInTimezone(targetY, targetM, targetD, hours, minutes, tz);
 
-    // If Day 1 and already in the past, return now!
-    if (val <= 1 && targetDate.getTime() < Date.now()) {
+    // If Step 1, Day 1 and already in the past, return now!
+    if (isFirstStep && val <= 1 && targetDate.getTime() < Date.now()) {
       return new Date();
     }
     return targetDate;
   } catch (err) {
     const d = new Date(base);
-    const daysToAdd = val <= 1 ? 0 : val - 1;
+    const daysToAdd = isFirstStep ? (val <= 1 ? 0 : val - 1) : Math.max(1, val);
     d.setDate(d.getDate() + daysToAdd);
     return d;
   }
