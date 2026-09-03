@@ -20,8 +20,9 @@ exports.listDripCampaigns = async (req, res) => {
       .populate('audienceGroupId', 'name contactCount')
       .sort({ createdAt: -1 });
 
-    // Aggregate summary stats for each campaign
     const campaignIds = campaigns.map((c) => c._id);
+
+    // 1. Aggregate enrollment stats
     const enrollmentStats = await DripEnrollment.aggregate([
       { $match: { campaignId: { $in: campaignIds } } },
       {
@@ -38,7 +39,23 @@ exports.listDripCampaigns = async (req, res) => {
       },
     ]);
 
+    // 2. Aggregate delivery logs for actual messages sent (₹1 per message)
+    const deliveryStats = await DripDeliveryLog.aggregate([
+      { $match: { campaignId: { $in: campaignIds }, deliveryStatus: { $in: ['sent', 'delivered', 'read'] } } },
+      {
+        $group: {
+          _id: '$campaignId',
+          totalSent: { $sum: 1 },
+          delivered: { $sum: { $cond: [{ $in: ['$deliveryStatus', ['delivered', 'read']] }, 1, 0] } },
+          read: { $sum: { $cond: [{ $eq: ['$deliveryStatus', 'read'] }, 1, 0] } },
+        },
+      },
+    ]);
+
     const statsMap = new Map(enrollmentStats.map((s) => [String(s._id), s]));
+    const deliveryMap = new Map(deliveryStats.map((d) => [String(d._id), d]));
+
+    let totalDispatchedOverall = 0;
 
     const enriched = campaigns.map((c) => {
       const s = statsMap.get(String(c._id)) || {
@@ -50,13 +67,33 @@ exports.listDripCampaigns = async (req, res) => {
         completed: 0,
         stopped: 0,
       };
+      const del = deliveryMap.get(String(c._id)) || { totalSent: 0, delivered: 0, read: 0 };
+      const totalSent = del.totalSent || 0;
+      totalDispatchedOverall += totalSent;
+
       return {
         ...c.toObject(),
-        stats: s,
+        stats: {
+          ...s,
+          totalSent,
+          totalSpent: totalSent * 1.0, // ₹1.00 per message sent
+          deliveredCount: del.delivered || 0,
+          readCount: del.read || 0,
+        },
       };
     });
 
-    return success(res, { campaigns: enriched }, 'Drip campaigns fetched successfully');
+    const totalSpentOverall = totalDispatchedOverall * 1.0; // ₹1.00 per message sent
+
+    return success(
+      res,
+      {
+        campaigns: enriched,
+        totalDispatchedOverall,
+        totalSpentOverall,
+      },
+      'Drip campaigns fetched successfully'
+    );
   } catch (err) {
     return fail(res, err.message || 'Failed to list drip campaigns', 500);
   }
@@ -143,10 +180,16 @@ exports.getDripCampaign = async (req, res) => {
       completedEnrollments,
       activeEnrollments,
       pausedEnrollments,
+      totalSentMsgs: logs.filter((l) => ['sent', 'delivered', 'read'].includes(l.deliveryStatus)).length,
+      totalActualCost: logs.filter((l) => ['sent', 'delivered', 'read'].includes(l.deliveryStatus)).length * 1.0, // ₹1.00 per message sent
       isFullyCompleted: campaign.status === 'completed' || (totalEnrolled > 0 && completedStepsCount === enrichedSteps.length),
     };
 
-    return success(res, { campaign, steps: enrichedSteps, progressSummary }, 'Campaign details retrieved');
+    const campaignObj = campaign.toObject();
+    campaignObj.totalSentMsgs = progressSummary.totalSentMsgs;
+    campaignObj.totalActualCost = progressSummary.totalActualCost;
+
+    return success(res, { campaign: campaignObj, steps: enrichedSteps, progressSummary }, 'Campaign details retrieved');
   } catch (err) {
     return fail(res, err.message || 'Failed to get campaign details', 500);
   }
