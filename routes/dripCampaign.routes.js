@@ -11,6 +11,8 @@ router.post('/ai-generate', protect, clientScope, dripCtrl.generateAiCampaign);
 
 // Detail and Step Editing
 router.get('/:id', protect, clientScope, dripCtrl.getDripCampaign);
+router.put('/:id', protect, clientScope, dripCtrl.updateDripCampaign);
+router.post('/:id/duplicate', protect, clientScope, dripCtrl.duplicateCampaign);
 router.put('/:id/step/:stepId', protect, clientScope, dripCtrl.updateStep);
 
 // Lifecycle Controls

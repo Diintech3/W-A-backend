@@ -905,3 +905,97 @@ exports.deleteDripCampaign = async (req, res) => {
   }
 };
 
+// ─── Duplicate / Clone Drip Campaign ──────────────────────────────────────────
+exports.duplicateCampaign = async (req, res) => {
+  try {
+    const userId = req.targetUserId || req.user._id;
+    const sourceCampaign = await DripCampaign.findOne({ _id: req.params.id, userId });
+
+    if (!sourceCampaign) {
+      return fail(res, 'Source drip campaign not found', 404);
+    }
+
+    // 1. Create a clone in 'draft' status
+    const newCampaign = new DripCampaign({
+      userId,
+      name: `${sourceCampaign.name} (Copy)`,
+      goalDescription: sourceCampaign.goalDescription || '',
+      mode: sourceCampaign.mode || 'manual',
+      durationDays: sourceCampaign.durationDays || 30,
+      startDate: new Date(),
+      preferredSendTime: sourceCampaign.preferredSendTime || '10:00',
+      audienceGroupId: sourceCampaign.audienceGroupId,
+      status: 'draft',
+      totalAudience: sourceCampaign.totalAudience || 0,
+      totalSteps: sourceCampaign.totalSteps || 0,
+      estimatedCost: sourceCampaign.estimatedCost || 0,
+      categoryBreakdown: sourceCampaign.categoryBreakdown || { marketingCount: 0, utilityCount: 0 },
+    });
+    await newCampaign.save();
+
+    // 2. Clone all steps
+    const sourceSteps = await DripStep.find({ campaignId: sourceCampaign._id }).sort({ order: 1 });
+    const clonedStepsDocs = sourceSteps.map((s) => ({
+      campaignId: newCampaign._id,
+      order: s.order,
+      dayOffset: s.dayOffset ?? 1,
+      offsetValue: s.offsetValue !== undefined ? s.offsetValue : (s.dayOffset ?? 1),
+      offsetUnit: s.offsetUnit || 'days',
+      sendTime: s.sendTime || sourceCampaign.preferredSendTime || '10:00',
+      templateId: s.templateId,
+      notes: s.notes || '',
+      mediaType: s.mediaType || 'text',
+      variableMapping: s.variableMapping || [],
+    }));
+
+    if (clonedStepsDocs.length > 0) {
+      await DripStep.insertMany(clonedStepsDocs);
+    }
+
+    const populatedCampaign = await DripCampaign.findById(newCampaign._id)
+      .populate('audienceGroupId', 'name contactCount');
+
+    return success(
+      res,
+      { campaign: populatedCampaign, totalSteps: clonedStepsDocs.length },
+      `Campaign "${sourceCampaign.name}" duplicated as draft successfully!`
+    );
+  } catch (err) {
+    return fail(res, err.message || 'Failed to duplicate drip campaign', 500);
+  }
+};
+
+// ─── Update Drip Campaign Meta ────────────────────────────────────────────────
+exports.updateDripCampaign = async (req, res) => {
+  try {
+    const userId = req.targetUserId || req.user._id;
+    const campaign = await DripCampaign.findOne({ _id: req.params.id, userId });
+
+    if (!campaign) {
+      return fail(res, 'Drip campaign not found', 404);
+    }
+
+    const { name, audienceGroupId, startDate, preferredSendTime, goalDescription, durationDays } = req.body;
+    if (name) campaign.name = name.trim();
+    if (audienceGroupId) {
+      const grp = await ContactGroup.findById(audienceGroupId);
+      if (grp) {
+        campaign.audienceGroupId = audienceGroupId;
+        campaign.totalAudience = grp.contactCount || 0;
+      }
+    }
+    if (startDate) campaign.startDate = new Date(startDate);
+    if (preferredSendTime) campaign.preferredSendTime = preferredSendTime;
+    if (goalDescription !== undefined) campaign.goalDescription = goalDescription;
+    if (durationDays) campaign.durationDays = durationDays;
+
+    await campaign.save();
+    const populated = await DripCampaign.findById(campaign._id)
+      .populate('audienceGroupId', 'name contactCount');
+
+    return success(res, { campaign: populated }, 'Campaign updated successfully');
+  } catch (err) {
+    return fail(res, err.message || 'Failed to update campaign', 500);
+  }
+};
+
