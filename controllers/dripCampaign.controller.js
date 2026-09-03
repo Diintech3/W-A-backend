@@ -5,6 +5,7 @@ const DripDeliveryLog = require('../models/DripDeliveryLog');
 const Template = require('../models/Template');
 const Contact = require('../models/Contact');
 const ContactGroup = require('../models/ContactGroup');
+const User = require('../models/User');
 const { success, fail } = require('../utils/apiResponse');
 const { normalizePhone } = require('../utils/csvParser');
 const { generateDripStrategy, processGeneratedStepsWithTemplates } = require('../services/dripAi.service');
@@ -366,8 +367,13 @@ exports.activateCampaign = async (req, res) => {
     await campaign.save();
 
     const firstStep = steps[0];
-    const initialDueAt = new Date(
-      baselineDate.getTime() + (firstStep.dayOffset <= 1 ? 0 : (firstStep.dayOffset - 1) * 86400000)
+    const user = await User.findById(userId).select('businessHours');
+    const userTz = user?.businessHours?.timezone || 'Asia/Kolkata';
+    const initialDueAt = calculateStepDueAt(
+      baselineDate,
+      firstStep,
+      campaign.preferredSendTime || '10:00',
+      userTz
     );
 
     // 3. Batch insert enrollments (1,000 at a time with { ordered: false })
@@ -780,7 +786,11 @@ exports.dispatchEnrollmentNow = async (req, res) => {
     const nextStep = steps[enrollment.currentStepIndex + 1];
     if (nextStep) {
       enrollment.currentStepIndex += 1;
-      enrollment.nextDueAt = calculateStepDueAt(enrollment.enrolledAt, nextStep, campaign.preferredSendTime);
+      const isMinuteOrHour = ['minutes', 'hours'].includes(nextStep.offsetUnit);
+      const nextBase = isMinuteOrHour ? (enrollment.lastSentAt || new Date()) : enrollment.enrolledAt;
+      const user = await User.findById(userId).select('businessHours');
+      const userTz = user?.businessHours?.timezone || 'Asia/Kolkata';
+      enrollment.nextDueAt = calculateStepDueAt(nextBase, nextStep, campaign.preferredSendTime || '10:00', userTz);
     } else {
       enrollment.status = 'completed';
     }

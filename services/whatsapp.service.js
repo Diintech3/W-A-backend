@@ -63,6 +63,18 @@ async function sendTextMessage(userId, to, message) {
   return data;
 }
 
+function isValidHttpUrl(string) {
+  if (!string || typeof string !== 'string') return false;
+  try {
+    const url = new URL(string.trim());
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch (_) {
+    return false;
+  }
+}
+
+const DEFAULT_FALLBACK_IMAGE = 'https://pub-922d0b8e92144ec8adc99d837e581709.r2.dev/templates/1788359049295-0a037ab5553e45de7a3da761.jpg';
+
 function buildTemplateComponents(params) {
   const components = [];
 
@@ -72,8 +84,12 @@ function buildTemplateComponents(params) {
       components.push({
         type: 'header',
         parameters: params.header.map(val => {
-          const isImg = /^https?:\/\/.+/i.test(val);
-          return isImg ? { type: 'image', image: { link: val } } : { type: 'text', text: String(val) };
+          const isImg = /^https?:\/\/.+/i.test(String(val).trim());
+          if (isImg) {
+            const validUrl = isValidHttpUrl(val) ? String(val).trim() : DEFAULT_FALLBACK_IMAGE;
+            return { type: 'image', image: { link: validUrl } };
+          }
+          return { type: 'text', text: String(val) };
         })
       });
     }
@@ -100,15 +116,15 @@ function buildTemplateComponents(params) {
   for (const p of params) {
     const val = typeof p === 'string' ? p : String(p.text ?? p.value ?? p.parameter_name ?? '');
     
-    // Check if the value is an image link (url ending with image extension or containing r2/s3 bucket details)
-    const isImage = (p.parameter_name === 'header_image' || p.key === 'header_image') ||
+    // Check if the value is an image link
+    const isImage = (p.parameter_name === 'header_image' || p.key === 'header_image' || p.type === 'image') ||
                     /^https?:\/\/.+\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i.test(val) || 
                     (val.startsWith('http') && (val.includes('r2.cloudflarestorage.com') || val.includes('r2.dev') || val.includes('cloudinary')));
 
     if (isImage) {
-      let imgLink = val;
-      if (!imgLink || imgLink.startsWith('blob:') || !imgLink.startsWith('http')) {
-        imgLink = 'https://pub-922d0b8e92144ec8adc99d837e581709.r2.dev/templates/1788359049295-0a037ab5553e45de7a3da761.jpg';
+      let imgLink = String(val).trim();
+      if (!isValidHttpUrl(imgLink)) {
+        imgLink = DEFAULT_FALLBACK_IMAGE;
       }
       headerParams.push({
         type: 'image',

@@ -413,7 +413,10 @@ async function runDripSchedulerCycle() {
         const nextStep = steps[enrollment.currentStepIndex + 1];
         if (nextStep) {
           enrollment.currentStepIndex += 1;
-          enrollment.nextDueAt = calculateStepDueAt(enrollment.enrolledAt, nextStep);
+          const isMinuteOrHour = ['minutes', 'hours'].includes(nextStep.offsetUnit);
+          const nextBase = isMinuteOrHour ? (enrollment.lastSentAt || new Date()) : enrollment.enrolledAt;
+          const userTz = owner?.businessHours?.timezone || 'Asia/Kolkata';
+          enrollment.nextDueAt = calculateStepDueAt(nextBase, nextStep, parentCampaign?.preferredSendTime || '10:00', userTz);
         } else {
           enrollment.status = 'completed';
         }
@@ -453,7 +456,44 @@ function initDripScheduler() {
   info('WhatsApp Drip Campaign Scheduler initialized (every 1 minute)');
 }
 
-function calculateStepDueAt(baselineDate, step, defaultTime = '10:00') {
+function getTzOffsetMinutes(date, tz = 'Asia/Kolkata') {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(date);
+    const p = {};
+    parts.forEach(({ type, value }) => { p[type] = value; });
+
+    const tzHour = parseInt(p.hour, 10) === 24 ? 0 : parseInt(p.hour, 10);
+    const tzAsUtc = Date.UTC(
+      parseInt(p.year, 10),
+      parseInt(p.month, 10) - 1,
+      parseInt(p.day, 10),
+      tzHour,
+      parseInt(p.minute, 10),
+      parseInt(p.second, 10)
+    );
+    return (tzAsUtc - date.getTime()) / 60000;
+  } catch (err) {
+    return 330; // Default IST offset (+05:30)
+  }
+}
+
+function createDateInTimezone(year, month, day, hours, minutes, timezone = 'Asia/Kolkata') {
+  const provisionalUtc = new Date(Date.UTC(year, month - 1, day, hours, minutes, 0, 0));
+  const offsetMinutes = getTzOffsetMinutes(provisionalUtc, timezone);
+  return new Date(provisionalUtc.getTime() - offsetMinutes * 60000);
+}
+
+function calculateStepDueAt(baselineDate, step, defaultTime = '10:00', tz = 'Asia/Kolkata') {
   const base = new Date(baselineDate || Date.now());
   const unit = step.offsetUnit || 'days';
   const val = Number(step.offsetValue !== undefined ? step.offsetValue : (step.dayOffset ?? 1));
@@ -469,23 +509,48 @@ function calculateStepDueAt(baselineDate, step, defaultTime = '10:00') {
   }
 
   // unit === 'days'
-  const d = new Date(base);
-  const daysToAdd = val <= 1 ? 0 : val - 1;
-  d.setDate(d.getDate() + daysToAdd);
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz || 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const ymd = formatter.format(base);
+    const [y, m, d] = ymd.split('-').map(Number);
 
-  const timeStr = step.sendTime || defaultTime || '10:00';
-  if (timeStr && timeStr.includes(':')) {
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    if (!isNaN(hours) && !isNaN(minutes)) {
-      d.setHours(hours, minutes, 0, 0);
+    const daysToAdd = val <= 1 ? 0 : val - 1;
+    const dayBase = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+    dayBase.setUTCDate(dayBase.getUTCDate() + daysToAdd);
+
+    const targetY = dayBase.getUTCFullYear();
+    const targetM = dayBase.getUTCMonth() + 1;
+    const targetD = dayBase.getUTCDate();
+
+    const timeStr = step.sendTime || defaultTime || '10:00';
+    let hours = 10;
+    let minutes = 0;
+    if (timeStr && timeStr.includes(':')) {
+      const [h, min] = timeStr.split(':').map(Number);
+      if (!isNaN(h) && !isNaN(min)) {
+        hours = h;
+        minutes = min;
+      }
     }
-  }
 
-  // If Day 1 and already in the past, return now!
-  if (val <= 1 && d.getTime() < Date.now()) {
-    return new Date();
+    const targetDate = createDateInTimezone(targetY, targetM, targetD, hours, minutes, tz);
+
+    // If Day 1 and already in the past, return now!
+    if (val <= 1 && targetDate.getTime() < Date.now()) {
+      return new Date();
+    }
+    return targetDate;
+  } catch (err) {
+    const d = new Date(base);
+    const daysToAdd = val <= 1 ? 0 : val - 1;
+    d.setDate(d.getDate() + daysToAdd);
+    return d;
   }
-  return d;
 }
 
 module.exports = {
