@@ -10,7 +10,7 @@ const { success, fail } = require('../utils/apiResponse');
 const { normalizePhone } = require('../utils/csvParser');
 const { generateDripStrategy, processGeneratedStepsWithTemplates } = require('../services/dripAi.service');
 const whatsapp = require('../services/whatsapp.service');
-const { calculateStepDueAt, resolveTemplateVariables } = require('../services/dripScheduler.service');
+const { calculateStepDueAt, resolveTemplateVariables, runDripSchedulerCycle } = require('../services/dripScheduler.service');
 
 // ─── List All Drip Campaigns for User ──────────────────────────────────────────
 exports.listDripCampaigns = async (req, res) => {
@@ -516,6 +516,11 @@ exports.activateCampaign = async (req, res) => {
       }
     }
 
+    // Trigger immediate background scheduler cycle for any immediate steps
+    runDripSchedulerCycle().catch((schedErr) =>
+      console.error('[Drip Trigger] Immediate cycle error on activation:', schedErr.message)
+    );
+
     return success(
       res,
       { campaign, totalEnrolled: contacts.length, status: campaign.status, startDate: baselineDate },
@@ -597,6 +602,11 @@ exports.resumeCampaign = async (req, res) => {
     campaign.status = campaign.startDate && new Date(campaign.startDate) > new Date() ? 'scheduled' : 'active';
     campaign.pausedAt = null;
     await campaign.save();
+
+    // Trigger immediate background scheduler cycle for resumed steps
+    runDripSchedulerCycle().catch((schedErr) =>
+      console.error('[Drip Trigger] Immediate cycle error on resume:', schedErr.message)
+    );
 
     return success(res, { campaign }, 'Campaign resumed and timeline shifted successfully');
   } catch (err) {
@@ -1093,6 +1103,11 @@ exports.enrollSingleContact = async (req, res) => {
         }
       },
       { upsert: true, new: true }
+    );
+
+    // Trigger immediate background scheduler cycle
+    runDripSchedulerCycle().catch((schedErr) =>
+      console.error('[Drip Trigger] Immediate cycle error on single enrollment:', schedErr.message)
     );
 
     return success(res, { enrollment }, `Contact +${targetPhone} enrolled into "${campaign.name}" successfully!`);
