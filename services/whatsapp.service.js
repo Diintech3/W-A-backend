@@ -138,7 +138,14 @@ function buildTemplateComponents(params) {
           imgLink = `${publicBase}/templates/${pathParts[1]}`;
         }
       }
-      if (!isValidHttpUrl(imgLink) || imgLink.startsWith('blob:') || imgLink.includes('r2.cloudflarestorage.com')) {
+      if (
+        !isValidHttpUrl(imgLink) ||
+        imgLink.startsWith('blob:') ||
+        imgLink.includes('r2.cloudflarestorage.com') ||
+        imgLink.includes('scontent.whatsapp.net') ||
+        imgLink.includes('fbcdn.net') ||
+        imgLink.includes('facebook.com')
+      ) {
         imgLink = DEFAULT_FALLBACK_IMAGE;
       }
       headerParams.push({

@@ -132,7 +132,17 @@ function resolveTemplateVariables(contact, variableMapping = [], template) {
       }
     }
 
-    if (!imgUrl || typeof imgUrl !== 'string' || !imgUrl.startsWith('http') || imgUrl.startsWith('blob:') || imgUrl.includes('r2.cloudflarestorage.com')) {
+    // Meta Cloud API rejects scontent.whatsapp.net / fbcdn.net URLs with #131053 Media upload error
+    if (
+      !imgUrl ||
+      typeof imgUrl !== 'string' ||
+      !imgUrl.startsWith('http') ||
+      imgUrl.startsWith('blob:') ||
+      imgUrl.includes('r2.cloudflarestorage.com') ||
+      imgUrl.includes('scontent.whatsapp.net') ||
+      imgUrl.includes('fbcdn.net') ||
+      imgUrl.includes('facebook.com')
+    ) {
       imgUrl = 'https://pub-922d0b8e92144ec8adc99d837e581709.r2.dev/templates/1788359049295-0a037ab5553e45de7a3da761.jpg';
     }
 
