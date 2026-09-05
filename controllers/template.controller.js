@@ -39,10 +39,28 @@ exports.listTemplates = async (req, res) => {
         const match = metaTemplates.find(
           (m) => m.name.toLowerCase() === (t.whatsappTemplateName || '').toLowerCase()
         );
-        if (match && match.status !== t.metaStatus) {
-          t.metaStatus = match.status;
-          if (match.id) t.metaTemplateId = match.id;
-          await t.save();
+        if (match) {
+          let changed = false;
+          if (match.status !== t.metaStatus) {
+            t.metaStatus = match.status;
+            changed = true;
+          }
+          if (match.id && t.metaTemplateId !== match.id) {
+            t.metaTemplateId = match.id;
+            changed = true;
+          }
+          const header = (match.components || []).find((c) => c.type === 'HEADER');
+          const metaImg = header?.example?.header_handle?.[0];
+          if ((header?.format === 'IMAGE' || t.headerType === 'IMAGE') && metaImg && t.mediaUrl !== metaImg) {
+            t.headerType = 'IMAGE';
+            t.mediaUrl = metaImg;
+            if (!t.sampleParams) t.sampleParams = [];
+            const idx = t.sampleParams.findIndex(p => p.key === 'header_image');
+            if (idx >= 0) t.sampleParams[idx].value = metaImg;
+            else t.sampleParams.push({ key: 'header_image', value: metaImg });
+            changed = true;
+          }
+          if (changed) await t.save();
         }
       }
     } catch (syncErr) {
@@ -537,12 +555,13 @@ exports.metaSync = async (req, res) => {
     let created = 0, updated = 0;
     for (const mt of approved) {
       const headerComp = (mt.components || []).find((c) => c.type === 'HEADER');
-      const hasImageHeader = headerComp?.format === 'IMAGE';
+      const hasImageHeader = headerComp?.format === 'IMAGE' || headerComp?.type === 'IMAGE';
+      const metaImg = headerComp?.example?.header_handle?.[0] || '';
       const headerText = headerComp?.type === 'HEADER' && headerComp?.format === 'TEXT' ? headerComp.text : '';
 
       const sampleParams = [];
       if (hasImageHeader) {
-        sampleParams.push({ key: 'header_image', value: 'https://placehold.co/600x400?text=Upload+Header+Image' });
+        sampleParams.push({ key: 'header_image', value: metaImg || 'https://pub-922d0b8e92144ec8adc99d837e581709.r2.dev/templates/1788359049295-0a037ab5553e45de7a3da761.jpg' });
       }
 
       const bodyComp = (mt.components || []).find((c) => c.type === 'BODY');
@@ -560,7 +579,8 @@ exports.metaSync = async (req, res) => {
         existing.languageCode = mt.language || 'en';
         existing.bodyPreview = bodyText || existing.bodyPreview;
         existing.headerText = headerText || existing.headerText;
-        existing.headerType = hasImageHeader ? 'IMAGE' : 'TEXT';
+        existing.headerType = hasImageHeader ? 'IMAGE' : (headerText ? 'TEXT' : 'NONE');
+        existing.mediaUrl = metaImg || existing.mediaUrl || '';
         existing.metaStatus = mt.status;
         existing.sampleParams = sampleParams;
         await existing.save();
@@ -574,7 +594,8 @@ exports.metaSync = async (req, res) => {
           languageCode: mt.language || 'en',
           bodyPreview: bodyText,
           headerText,
-          headerType: hasImageHeader ? 'IMAGE' : 'TEXT',
+          headerType: hasImageHeader ? 'IMAGE' : (headerText ? 'TEXT' : 'NONE'),
+          mediaUrl: metaImg || '',
           sampleParams,
           metaStatus: mt.status,
         });
