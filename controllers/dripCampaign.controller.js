@@ -21,6 +21,10 @@ const {
 exports.listDripCampaigns = async (req, res) => {
   try {
     const userId = req.targetUserId || req.user._id;
+
+    // Trigger eager background scheduler run to immediately process any due messages
+    runDripSchedulerCycle().catch(() => {});
+
     const campaigns = await DripCampaign.find({ userId })
       .populate('audienceGroupId', 'name contactCount')
       .sort({ createdAt: -1 });
@@ -108,6 +112,10 @@ exports.listDripCampaigns = async (req, res) => {
 exports.getDripCampaign = async (req, res) => {
   try {
     const userId = req.targetUserId || req.user._id;
+
+    // Trigger eager background scheduler run to immediately process any due messages
+    runDripSchedulerCycle().catch(() => {});
+
     const campaign = await DripCampaign.findOne({ _id: req.params.id, userId })
       .populate('audienceGroupId', 'name contactCount');
 

@@ -47,11 +47,11 @@ function isWithinBusinessHours(user) {
  * Stale-lock recovery & Deduplication Cleaner
  */
 async function cleanStaleLocks() {
-  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+  const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
   try {
     const staleEnrollments = await DripEnrollment.find({
       isProcessing: true,
-      processingStartedAt: { $lt: fiveMinutesAgo },
+      processingStartedAt: { $lt: twoMinutesAgo },
     }).limit(50);
 
     for (const enrollment of staleEnrollments) {
@@ -577,18 +577,30 @@ async function dispatchDueStepsForCampaign(campaignId, userId, forceAllActive = 
   };
 }
 
-let schedulerStarted = false;
-
-function initDripScheduler() {
+let schedulerStarted = false;function initDripScheduler() {
   if (schedulerStarted) return;
   schedulerStarted = true;
 
-  // Run every minute
+  // Run every 15 seconds for real-time sub-minute dispatch responsiveness
+  setInterval(async () => {
+    await runDripSchedulerCycle().catch((err) => {
+      error('[Drip Scheduler] Interval cycle error:', { message: err.message });
+    });
+  }, 15000);
+
+  // Run every minute via node-cron as redundant safety backup
   cron.schedule('* * * * *', async () => {
-    await runDripSchedulerCycle();
+    await runDripSchedulerCycle().catch((err) => {
+      error('[Drip Scheduler] Cron cycle error:', { message: err.message });
+    });
   });
 
-  info('WhatsApp Drip Campaign Scheduler initialized (every 1 minute)');
+  // Kick off initial cycle 2 seconds after server boot
+  setTimeout(() => {
+    runDripSchedulerCycle().catch(() => {});
+  }, 2000);
+
+  info('WhatsApp Drip Campaign Scheduler initialized (high-frequency 15s interval + 1m cron)');
 }
 
 function getTzOffsetMinutes(date, tz = 'Asia/Kolkata') {
@@ -632,6 +644,14 @@ function calculateStepDueAt(baselineDate, step, defaultTime = '10:00', tz = 'Asi
   const base = new Date(baselineDate || Date.now());
   const unit = step.offsetUnit || 'days';
   const val = Number(step.offsetValue !== undefined ? step.offsetValue : (step.dayOffset ?? 1));
+
+  // If first step and user selected 0 delay or immediate, send immediately (now)
+  if (isFirstStep && (val <= 0 || !step.sendTime)) {
+    if (unit === 'minutes' || unit === 'hours') return new Date();
+    if (unit === 'days' && val <= 1 && (!step.sendTime || step.sendTime === '')) {
+      return new Date();
+    }
+  }
 
   if (unit === 'minutes') {
     if (isFirstStep && val <= 0) return new Date();
@@ -713,8 +733,8 @@ function calculateStepDueAt(baselineDate, step, defaultTime = '10:00', tz = 'Asi
 
     const targetDate = createDateInTimezone(targetY, targetM, targetD, hours, minutes, tz);
 
-    // If Step 1 on start date and the scheduled hour/minute has already passed, send immediately now!
-    if (isFirstStep && daysToAdd === 0 && targetDate.getTime() <= Date.now() + 60000) {
+    // If Step 1 on start date and the scheduled hour/minute has already arrived or passed, send immediately now!
+    if (isFirstStep && daysToAdd === 0 && (!step.sendTime || targetDate.getTime() <= Date.now() + 60000)) {
       return new Date();
     }
     return targetDate;
