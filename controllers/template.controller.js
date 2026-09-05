@@ -590,13 +590,21 @@ exports.metaSync = async (req, res) => {
 };
 
 exports.adminApproveAndSubmit = async (req, res) => {
+  let template = null;
   try {
     const { templateId } = req.params;
     
-    // Find template and ensure owner is the admin (req.user._id)
-    const template = await Template.findOne({ _id: templateId, userId: req.user._id });
+    // Find template and ensure owner is the admin (req.user._id) or superadmin
+    template = await Template.findOne({
+      _id: templateId,
+      $or: [
+        { userId: req.user._id },
+        { createdByAdmin: req.user._id },
+        ...(req.user.role === 'superadmin' ? [{}] : []),
+      ],
+    });
     if (!template) {
-      return fail(res, 'Template not found or not owned by you', 404);
+      return fail(res, 'Template not found or not accessible', 404);
     }
 
     if (template.metaStatus !== 'PENDING_ADMIN_APPROVAL' && template.metaStatus !== 'DRAFT') {
@@ -664,8 +672,12 @@ exports.adminApproveAndSubmit = async (req, res) => {
       `Template Approved & Submitted to Meta — Status: ${template.metaStatus}`
     );
   } catch (e) {
-    const status = e.statusCode || 500;
-    const msg = e.response?.data?.error?.message || e.message || 'Failed to submit template to Meta';
+    const metaErr = e.response?.data?.error;
+    let msg = metaErr?.error_user_msg || metaErr?.error_user_title || metaErr?.message || e.message || 'Failed to submit template to Meta';
+    if (metaErr?.error_subcode === 2388023) {
+      msg = `Meta Cooldown: A template with this name was recently deleted on Meta. Please create with a new name (e.g. ${template?.whatsappTemplateName}_v2) or click Direct Approve.`;
+    }
+    const status = (e.statusCode && e.statusCode < 500) ? e.statusCode : (e.response?.status && e.response.status < 500) ? e.response.status : 400;
     return fail(res, msg, status);
   }
 };
