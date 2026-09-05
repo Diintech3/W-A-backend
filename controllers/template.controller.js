@@ -51,7 +51,11 @@ exports.listTemplates = async (req, res) => {
           }
           const header = (match.components || []).find((c) => c.type === 'HEADER');
           const metaImg = header?.example?.header_handle?.[0];
-          if ((header?.format === 'IMAGE' || t.headerType === 'IMAGE') && metaImg && t.mediaUrl !== metaImg) {
+          if (
+            (header?.format === 'IMAGE' || t.headerType === 'IMAGE') &&
+            metaImg &&
+            (!t.mediaUrl || t.mediaUrl.startsWith('blob:') || t.mediaUrl.includes('scontent.whatsapp.net'))
+          ) {
             t.headerType = 'IMAGE';
             t.mediaUrl = metaImg;
             if (!t.sampleParams) t.sampleParams = [];
