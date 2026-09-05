@@ -157,12 +157,11 @@ exports.getDripCampaign = async (req, res) => {
 
       const lastLog = stepLogs.sort((a, b) => new Date(b.sentAt || 0) - new Date(a.sentAt || 0))[0];
 
-      // A step is completed if all enrolled contacts have moved past this step (currentStepIndex > idx)
-      // OR if every contact has an attempted/sent delivery log for this step
-      const allPassed = totalEnrolled > 0 && enrollments.every((e) => e.currentStepIndex > idx || e.status === 'completed');
-      const isCompleted = allPassed || (totalEnrolled > 0 && totalAttempted >= totalEnrolled);
-      const isCurrent = !isCompleted && enrollments.some((e) => e.currentStepIndex === idx && ['active', 'paused'].includes(e.status));
-      const isPending = !isCompleted && !isCurrent;
+      // A step is completed if sentCount matches enrolled, or if contacts passed with success
+      const isCompleted = (totalEnrolled > 0 && sentCount >= totalEnrolled) || (totalEnrolled > 0 && enrollments.every((e) => e.currentStepIndex > idx && e.status !== 'failed'));
+      const isFailed = failedCount > 0 && sentCount === 0;
+      const isCurrent = !isCompleted && !isFailed && enrollments.some((e) => e.currentStepIndex === idx && ['active', 'paused'].includes(e.status));
+      const isPending = !isCompleted && !isFailed && !isCurrent;
 
       return {
         ...stepObj,
@@ -173,10 +172,12 @@ exports.getDripCampaign = async (req, res) => {
           failedCount,
           totalAttempted,
           lastSentAt: lastLog?.sentAt || null,
+          lastErrorReason: lastLog?.errorReason || '',
           isCompleted,
+          isFailed,
           isCurrent,
           isPending,
-          completionPercent: totalEnrolled > 0 ? Math.min(100, Math.round((Math.max(sentCount, totalAttempted) / totalEnrolled) * 100)) : 0,
+          completionPercent: totalEnrolled > 0 ? Math.min(100, Math.round((sentCount / totalEnrolled) * 100)) : 0,
         },
       };
     });
