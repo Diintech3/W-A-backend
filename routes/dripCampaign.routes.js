@@ -22,6 +22,8 @@ router.post('/:id/start', protect, clientScope, dripCtrl.activateCampaign);
 router.post('/:id/pause', protect, clientScope, dripCtrl.pauseCampaign);
 router.post('/:id/resume', protect, clientScope, dripCtrl.resumeCampaign);
 router.post('/:id/stop', protect, clientScope, dripCtrl.stopCampaign);
+router.post('/:id/dispatch-due', protect, clientScope, dripCtrl.dispatchDueSteps);
+router.post('/:id/retry-failed', protect, clientScope, dripCtrl.retryFailedEnrollments);
 router.delete('/:id', protect, clientScope, dripCtrl.deleteDripCampaign);
 
 // Testing, Simulation & Inbox Enrollment

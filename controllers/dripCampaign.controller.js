@@ -10,7 +10,12 @@ const { success, fail } = require('../utils/apiResponse');
 const { normalizePhone } = require('../utils/csvParser');
 const { generateDripStrategy, processGeneratedStepsWithTemplates } = require('../services/dripAi.service');
 const whatsapp = require('../services/whatsapp.service');
-const { calculateStepDueAt, resolveTemplateVariables, runDripSchedulerCycle } = require('../services/dripScheduler.service');
+const {
+  calculateStepDueAt,
+  resolveTemplateVariables,
+  runDripSchedulerCycle,
+  dispatchDueStepsForCampaign,
+} = require('../services/dripScheduler.service');
 
 // ─── List All Drip Campaigns for User ──────────────────────────────────────────
 exports.listDripCampaigns = async (req, res) => {
@@ -171,6 +176,12 @@ exports.getDripCampaign = async (req, res) => {
       ? Math.round((completedStepsCount / enrichedSteps.length) * 100)
       : 0;
 
+    const failedEnrollments = enrollments.filter((e) => e.status === 'failed').length;
+    const unapprovedSteps = enrichedSteps.filter((s) => {
+      const t = s.templateId;
+      return !t || t.metaStatus !== 'APPROVED';
+    });
+
     const progressSummary = {
       totalSteps: enrichedSteps.length,
       completedStepsCount,
@@ -180,6 +191,9 @@ exports.getDripCampaign = async (req, res) => {
       completedEnrollments,
       activeEnrollments,
       pausedEnrollments,
+      failedEnrollments,
+      unapprovedStepsCount: unapprovedSteps.length,
+      unapprovedStepNumbers: unapprovedSteps.map((s) => s.order),
       totalSentMsgs: logs.filter((l) => ['sent', 'delivered', 'read'].includes(l.deliveryStatus)).length,
       totalActualCost: logs.filter((l) => ['sent', 'delivered', 'read'].includes(l.deliveryStatus)).length * 1.0, // ₹1.00 per message sent
       isFullyCompleted: campaign.status === 'completed' || (totalEnrolled > 0 && completedStepsCount === enrichedSteps.length),
@@ -1115,4 +1129,56 @@ exports.enrollSingleContact = async (req, res) => {
     return fail(res, err.message || 'Failed to enroll contact', 500);
   }
 };
+
+// ─── Manually Dispatch All Due Steps Immediately ─────────────────────────────
+exports.dispatchDueSteps = async (req, res) => {
+  try {
+    const userId = req.targetUserId || req.user._id;
+    const { id } = req.params;
+    const force = req.body?.force === true;
+
+    const result = await dispatchDueStepsForCampaign(id, userId, force);
+    return success(res, result, 'Drip dispatch cycle executed successfully');
+  } catch (err) {
+    return fail(res, err.message || 'Failed to dispatch due steps', 500);
+  }
+};
+
+// ─── Retry Failed Enrollments ────────────────────────────────────────────────
+exports.retryFailedEnrollments = async (req, res) => {
+  try {
+    const userId = req.targetUserId || req.user._id;
+    const { id } = req.params;
+
+    const campaign = await DripCampaign.findOne({ _id: id, userId });
+    if (!campaign) {
+      return fail(res, 'Campaign not found', 404);
+    }
+
+    const result = await DripEnrollment.updateMany(
+      { campaignId: id, status: 'failed' },
+      {
+        $set: {
+          status: 'active',
+          retryCount: 0,
+          nextDueAt: new Date(),
+          isProcessing: false,
+          processingStartedAt: null,
+        },
+      }
+    );
+
+    // Trigger immediate background scheduler cycle
+    runDripSchedulerCycle().catch(() => {});
+
+    return success(
+      res,
+      { modifiedCount: result.modifiedCount },
+      `Reset ${result.modifiedCount} failed contact(s) to active and queued for immediate delivery!`
+    );
+  } catch (err) {
+    return fail(res, err.message || 'Failed to retry failed contacts', 500);
+  }
+};
+
 

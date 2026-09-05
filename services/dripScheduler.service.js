@@ -85,14 +85,28 @@ async function cleanStaleLocks() {
 }
 
 /**
- * Auto-promote scheduled campaigns whose startDate has arrived
+ * Auto-promote scheduled campaigns whose startDate has arrived or has due contacts
  */
 async function promoteScheduledCampaigns() {
   try {
+    // 1. Promote scheduled campaigns whose startDate is now or past
     await DripCampaign.updateMany(
       { status: 'scheduled', startDate: { $lte: new Date() } },
       { $set: { status: 'active' } }
     );
+
+    // 2. Also promote any scheduled campaign that has active enrollments with nextDueAt <= now
+    const dueCampaignIds = await DripEnrollment.find({
+      status: 'active',
+      nextDueAt: { $lte: new Date() },
+    }).distinct('campaignId');
+
+    if (dueCampaignIds.length > 0) {
+      await DripCampaign.updateMany(
+        { _id: { $in: dueCampaignIds }, status: 'scheduled' },
+        { $set: { status: 'active' } }
+      );
+    }
   } catch (err) {
     error('[Drip Scheduler] Failed to promote scheduled campaigns:', { message: err.message });
   }
@@ -154,7 +168,7 @@ function resolveTemplateVariables(contact, variableMapping = [], template) {
         else if (source === 'contact.phone') val = contact?.phone || fallback;
         else if (source === 'contact.email') val = contact?.email || fallback;
         else if (source.startsWith('tag:') && contact?.tags?.length) val = contact.tags[0] || fallback;
-        else val = fallback || contact?.name || 'Friend';
+        else val = fallback || contact?.name || 'Customer';
       } else if (sampleItem && sampleItem.value) {
         // If 1st variable, prefer contact name if sample is generic, else use sample value
         if (i === 0 && contact?.name && !sampleItem.value.startsWith('http')) {
@@ -163,7 +177,7 @@ function resolveTemplateVariables(contact, variableMapping = [], template) {
           val = sampleItem.value;
         }
       } else {
-        val = i === 0 ? (contact?.name || 'Friend') : '';
+        val = i === 0 ? (contact?.name || 'Customer') : `Value ${i + 1}`;
       }
 
       params.push({
@@ -193,20 +207,30 @@ async function runDripSchedulerCycle() {
     // 2. Auto-promote scheduled campaigns to active
     await promoteScheduledCampaigns();
 
-    // 3. Find due active enrollments
+    // 3. Find active campaigns only
+    const activeCampaigns = await DripCampaign.find({ status: 'active' }).select('_id preferredSendTime name');
+    const activeCampaignIds = activeCampaigns.map((c) => c._id);
+
+    if (!activeCampaignIds.length) {
+      isRunning = false;
+      return;
+    }
+
+    // 4. Find due active enrollments belonging to active campaigns
     const now = new Date();
     const dueEnrollments = await DripEnrollment.find({
+      campaignId: { $in: activeCampaignIds },
       nextDueAt: { $lte: now },
       status: 'active',
       isProcessing: { $ne: true },
-    }).limit(80);
+    }).limit(100);
 
     if (!dueEnrollments.length) {
       isRunning = false;
       return;
     }
 
-    // 4. Atomically claim batch to prevent race conditions
+    // 5. Atomically claim batch to prevent race conditions
     const claimedEnrollments = [];
     for (const item of dueEnrollments) {
       const claimed = await DripEnrollment.findOneAndUpdate(
@@ -222,13 +246,13 @@ async function runDripSchedulerCycle() {
       return;
     }
 
-    // 5. Batch In-Memory Maps (Triple Map: Campaign, User, Steps)
+    // 6. Batch In-Memory Maps (Campaign, User, Steps, Contacts)
     const uniqueCampaignIds = [...new Set(claimedEnrollments.map((e) => String(e.campaignId)))];
     const uniqueUserIds = [...new Set(claimedEnrollments.map((e) => String(e.userId)))];
     const uniqueContactIds = [...new Set(claimedEnrollments.map((e) => String(e.contactId)))];
 
     const [campaigns, users, dripSteps, contacts] = await Promise.all([
-      DripCampaign.find({ _id: { $in: uniqueCampaignIds } }).select('status name'),
+      DripCampaign.find({ _id: { $in: uniqueCampaignIds } }).select('status name preferredSendTime'),
       User.find({ _id: { $in: uniqueUserIds } }).select('businessHours name email whatsappPhoneNumberId'),
       DripStep.find({ campaignId: { $in: uniqueCampaignIds } }).sort('order'),
       Contact.find({ _id: { $in: uniqueContactIds } }).select('name phone email tags optedOut'),
@@ -245,7 +269,7 @@ async function runDripSchedulerCycle() {
       stepsByCampaign.get(key).push(step);
     }
 
-    // 6. Process each claimed enrollment
+    // 7. Process each claimed enrollment
     for (const enrollment of claimedEnrollments) {
       try {
         // Guard 1: Campaign must be active
@@ -260,7 +284,7 @@ async function runDripSchedulerCycle() {
         // Guard 2: Must be within client's business hours
         const owner = userMap.get(String(enrollment.userId));
         if (!isWithinBusinessHours(owner)) {
-          // Outside business hours: release lock cleanly without advancing dates or retries!
+          // Outside business hours: release lock cleanly without advancing dates or retries
           enrollment.isProcessing = false;
           enrollment.processingStartedAt = null;
           await enrollment.save();
@@ -289,21 +313,44 @@ async function runDripSchedulerCycle() {
         }
 
         // Guard 5: Live Template Approval Safety Check
-        const template = await Template.findById(currentStep.templateId);
+        let template = await Template.findById(currentStep.templateId);
+        if (!template) {
+          // If template doc missing, check by whatsappTemplateName or fallback
+          template = await Template.findOne({
+            $or: [{ userId: enrollment.userId }, { assignedTo: enrollment.userId }],
+            metaStatus: 'APPROVED',
+          });
+        }
+
         if (!template || template.metaStatus !== 'APPROVED') {
           error('[Drip Scheduler] Template not approved at send time:', {
             templateId: currentStep.templateId,
             metaStatus: template?.metaStatus || 'MISSING',
             campaignId: enrollment.campaignId,
+            stepOrder: currentStep.order,
           });
-          // Release lock and skip send
+
+          // Log failure record so user can clearly see why this step is waiting in UI
+          await DripDeliveryLog.create({
+            userId: enrollment.userId,
+            campaignId: enrollment.campaignId,
+            enrollmentId: enrollment._id,
+            stepId: currentStep._id,
+            contactId: enrollment.contactId,
+            phone: enrollment.phone,
+            deliveryStatus: 'failed',
+            errorReason: `Template "${template?.name || 'Step ' + currentStep.order}" is not approved by Meta (Status: ${template?.metaStatus || 'MISSING'}). Approve template to resume sequence.`,
+          }).catch(() => {});
+
+          // Release lock and push nextDueAt 30 minutes into future so it doesn't block other enrollments
           enrollment.isProcessing = false;
           enrollment.processingStartedAt = null;
+          enrollment.nextDueAt = new Date(Date.now() + 30 * 60 * 1000);
           await enrollment.save();
           continue;
         }
 
-        // 7. Resolve dynamic variables & send message
+        // 8. Resolve dynamic variables & send message
         const params = resolveTemplateVariables(contact, currentStep.variableMapping, template);
         const toPhone = enrollment.phone;
 
@@ -339,6 +386,7 @@ async function runDripSchedulerCycle() {
           }
 
           // Non-rate limit send error
+          const errMsg = sendErr.response?.data?.error?.message || sendErr.message || 'Meta send failed';
           await DripDeliveryLog.create({
             userId: enrollment.userId,
             campaignId: enrollment.campaignId,
@@ -347,12 +395,15 @@ async function runDripSchedulerCycle() {
             contactId: enrollment.contactId,
             phone: toPhone,
             deliveryStatus: 'failed',
-            errorReason: sendErr.response?.data?.error?.message || sendErr.message || 'Meta send failed',
+            errorReason: errMsg,
           });
 
           enrollment.retryCount += 1;
           if (enrollment.retryCount >= 3) {
             enrollment.status = 'failed';
+          } else {
+            // Push 15 minutes forward for retry
+            enrollment.nextDueAt = new Date(Date.now() + 15 * 60 * 1000);
           }
           enrollment.isProcessing = false;
           enrollment.processingStartedAt = null;
@@ -360,7 +411,7 @@ async function runDripSchedulerCycle() {
           continue;
         }
 
-        // 8. Successful dispatch -> Log & State transition
+        // 9. Successful dispatch -> Log & State transition
         const metaMessageId = apiRes?.messages?.[0]?.id || '';
         await DripDeliveryLog.create({
           userId: enrollment.userId,
@@ -479,6 +530,53 @@ async function runDripSchedulerCycle() {
   }
 }
 
+/**
+ * Synchronously run drip dispatch for a specific campaign
+ * @param {string} campaignId
+ * @param {string} userId
+ * @param {boolean} forceAllActive - If true, dispatches any active contacts regardless of nextDueAt
+ */
+async function dispatchDueStepsForCampaign(campaignId, userId, forceAllActive = false) {
+  const campaign = await DripCampaign.findOne({ _id: campaignId, userId });
+  if (!campaign) {
+    throw new Error('Campaign not found');
+  }
+
+  if (campaign.status === 'scheduled') {
+    campaign.status = 'active';
+    await campaign.save();
+  }
+
+  if (campaign.status !== 'active') {
+    throw new Error(`Campaign is currently ${campaign.status}. Activate or resume campaign first.`);
+  }
+
+  if (forceAllActive) {
+    // Set nextDueAt to now for all active non-processing enrollments
+    await DripEnrollment.updateMany(
+      { campaignId, status: 'active', isProcessing: { $ne: true } },
+      { $set: { nextDueAt: new Date(), retryCount: 0 } }
+    );
+  }
+
+  await runDripSchedulerCycle();
+
+  const [activeCount, completedCount, failedCount, remainingDue] = await Promise.all([
+    DripEnrollment.countDocuments({ campaignId, status: 'active' }),
+    DripEnrollment.countDocuments({ campaignId, status: 'completed' }),
+    DripEnrollment.countDocuments({ campaignId, status: 'failed' }),
+    DripEnrollment.countDocuments({ campaignId, status: 'active', nextDueAt: { $lte: new Date() } }),
+  ]);
+
+  return {
+    campaignStatus: campaign.status,
+    activeCount,
+    completedCount,
+    failedCount,
+    remainingDue,
+  };
+}
+
 let schedulerStarted = false;
 
 function initDripScheduler() {
@@ -537,14 +635,18 @@ function calculateStepDueAt(baselineDate, step, defaultTime = '10:00', tz = 'Asi
 
   if (unit === 'minutes') {
     if (isFirstStep && val <= 0) return new Date();
-    const mins = isFirstStep ? val : Math.max(1, val);
-    return new Date(base.getTime() + mins * 60 * 1000);
+    const mins = isFirstStep ? Math.max(0, val) : Math.max(1, val);
+    const target = new Date(base.getTime() + mins * 60 * 1000);
+    if (isFirstStep && target.getTime() <= Date.now() + 60000) return new Date();
+    return target;
   }
 
   if (unit === 'hours') {
     if (isFirstStep && val <= 0) return new Date();
-    const hrs = isFirstStep ? val : Math.max(1, val);
-    return new Date(base.getTime() + hrs * 3600 * 1000);
+    const hrs = isFirstStep ? Math.max(0, val) : Math.max(1, val);
+    const target = new Date(base.getTime() + hrs * 3600 * 1000);
+    if (isFirstStep && target.getTime() <= Date.now() + 60000) return new Date();
+    return target;
   }
 
   if (unit === 'months') {
@@ -611,8 +713,8 @@ function calculateStepDueAt(baselineDate, step, defaultTime = '10:00', tz = 'Asi
 
     const targetDate = createDateInTimezone(targetY, targetM, targetD, hours, minutes, tz);
 
-    // If Step 1, Day 1 and already in the past, return now!
-    if (isFirstStep && val <= 1 && targetDate.getTime() < Date.now()) {
+    // If Step 1 on start date and the scheduled hour/minute has already passed, send immediately now!
+    if (isFirstStep && daysToAdd === 0 && targetDate.getTime() <= Date.now() + 60000) {
       return new Date();
     }
     return targetDate;
@@ -627,6 +729,7 @@ function calculateStepDueAt(baselineDate, step, defaultTime = '10:00', tz = 'Asi
 module.exports = {
   initDripScheduler,
   runDripSchedulerCycle,
+  dispatchDueStepsForCampaign,
   resolveTemplateVariables,
   calculateStepDueAt,
 };
