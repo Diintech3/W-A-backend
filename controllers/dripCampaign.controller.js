@@ -1167,8 +1167,15 @@ exports.retryFailedEnrollments = async (req, res) => {
       return fail(res, 'Campaign not found', 404);
     }
 
+    if (['completed', 'stopped', 'paused'].includes(campaign.status)) {
+      campaign.status = 'active';
+      campaign.completedAt = null;
+      campaign.stoppedAt = null;
+      await campaign.save();
+    }
+
     const result = await DripEnrollment.updateMany(
-      { campaignId: id, status: 'failed' },
+      { campaignId: id, status: { $in: ['failed', 'completed', 'paused'] } },
       {
         $set: {
           status: 'active',
@@ -1185,8 +1192,8 @@ exports.retryFailedEnrollments = async (req, res) => {
 
     return success(
       res,
-      { modifiedCount: result.modifiedCount },
-      `Reset ${result.modifiedCount} failed contact(s) to active and queued for immediate delivery!`
+      { modifiedCount: result.modifiedCount, campaignStatus: campaign.status },
+      `Reset ${result.modifiedCount} contact(s) to active and queued for immediate delivery!`
     );
   } catch (err) {
     return fail(res, err.message || 'Failed to retry failed contacts', 500);
