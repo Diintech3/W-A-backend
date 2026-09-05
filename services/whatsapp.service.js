@@ -84,12 +84,20 @@ function buildTemplateComponents(params) {
       components.push({
         type: 'header',
         parameters: params.header.map(val => {
-          const isImg = /^https?:\/\/.+/i.test(String(val).trim());
+          let str = String(val).trim();
+          if (str.includes('r2.cloudflarestorage.com')) {
+            const publicBase = (process.env.R2_PUBLIC_URL || 'https://pub-922d0b8e92144ec8adc99d837e581709.r2.dev').replace(/\/$/, '');
+            const pathParts = str.split('/templates/');
+            if (pathParts.length > 1) {
+              str = `${publicBase}/templates/${pathParts[1]}`;
+            }
+          }
+          const isImg = /^https?:\/\/.+/i.test(str);
           if (isImg) {
-            const validUrl = isValidHttpUrl(val) ? String(val).trim() : DEFAULT_FALLBACK_IMAGE;
+            const validUrl = (isValidHttpUrl(str) && !str.includes('r2.cloudflarestorage.com') && !str.startsWith('blob:')) ? str : DEFAULT_FALLBACK_IMAGE;
             return { type: 'image', image: { link: validUrl } };
           }
-          return { type: 'text', text: String(val) };
+          return { type: 'text', text: str };
         })
       });
     }
@@ -114,7 +122,7 @@ function buildTemplateComponents(params) {
   const bodyParams = [];
 
   for (const p of params) {
-    const val = typeof p === 'string' ? p : String(p.text ?? p.value ?? p.parameter_name ?? '');
+    let val = typeof p === 'string' ? p : String(p.text ?? p.value ?? p.parameter_name ?? '');
     
     // Check if the value is an image link
     const isImage = (p.parameter_name === 'header_image' || p.key === 'header_image' || p.type === 'image') ||
@@ -123,7 +131,14 @@ function buildTemplateComponents(params) {
 
     if (isImage) {
       let imgLink = String(val).trim();
-      if (!isValidHttpUrl(imgLink)) {
+      if (imgLink.includes('r2.cloudflarestorage.com')) {
+        const publicBase = (process.env.R2_PUBLIC_URL || 'https://pub-922d0b8e92144ec8adc99d837e581709.r2.dev').replace(/\/$/, '');
+        const pathParts = imgLink.split('/templates/');
+        if (pathParts.length > 1) {
+          imgLink = `${publicBase}/templates/${pathParts[1]}`;
+        }
+      }
+      if (!isValidHttpUrl(imgLink) || imgLink.startsWith('blob:') || imgLink.includes('r2.cloudflarestorage.com')) {
         imgLink = DEFAULT_FALLBACK_IMAGE;
       }
       headerParams.push({
@@ -312,7 +327,18 @@ async function getMetaMediaHandle(token, mediaUrl, defaultMime = 'image/jpeg') {
       buffer = Buffer.from(parts[1], 'base64');
     } else {
       try {
-        const resp = await axios.get(mediaUrl, { responseType: 'arraybuffer', timeout: 5000 });
+        let fetchUrl = String(mediaUrl).trim();
+        if (fetchUrl.includes('r2.cloudflarestorage.com')) {
+          const publicBase = (process.env.R2_PUBLIC_URL || 'https://pub-922d0b8e92144ec8adc99d837e581709.r2.dev').replace(/\/$/, '');
+          const pathParts = fetchUrl.split('/templates/');
+          if (pathParts.length > 1) {
+            fetchUrl = `${publicBase}/templates/${pathParts[1]}`;
+          } else {
+            const anyParts = fetchUrl.split('/yovoai/');
+            if (anyParts.length > 1) fetchUrl = `${publicBase}/${anyParts[1]}`;
+          }
+        }
+        const resp = await axios.get(fetchUrl, { responseType: 'arraybuffer', timeout: 10000 });
         buffer = Buffer.from(resp.data);
         if (resp.headers['content-type']) {
           mimeType = resp.headers['content-type'].split(';')[0];

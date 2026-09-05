@@ -68,15 +68,17 @@ async function runCampaignSendJob(campaignId, userId) {
   campaign.totalContacts = contacts.length;
   await campaign.save();
 
-  const params = templateParamsFromDoc(template);
   let sent = 0;
   let delivered = 0;
   let read = 0;
   let failed = 0;
 
+  const { resolveTemplateVariables } = require('../services/dripScheduler.service');
+
   for (let i = 0; i < contacts.length; i++) {
     const contact = contacts[i];
     const phone = normalizePhone(contact.phone) || String(contact.phone).replace(/\D/g, '');
+    const params = resolveTemplateVariables(contact, [], template);
 
     // Auto-link user conversation to photoshare folder if configured
     if (campaign.photoshareFolderId) {

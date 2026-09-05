@@ -109,9 +109,19 @@ function resolveTemplateVariables(contact, variableMapping = [], template) {
   if ((template?.headerType === 'IMAGE' || template?.mediaType === 'image')) {
     const sampleHeader = template.sampleParams?.find(p => p.key === 'header_image')?.value;
     let imgUrl = sampleHeader || template.mediaUrl;
-    if (!imgUrl || imgUrl.startsWith('blob:') || !imgUrl.startsWith('http')) {
-      imgUrl = 'https://www.lakshmiraj.com/assets/volunteer-WDd9K1Rb.png';
+
+    if (imgUrl && typeof imgUrl === 'string' && imgUrl.includes('r2.cloudflarestorage.com')) {
+      const publicBase = (process.env.R2_PUBLIC_URL || 'https://pub-922d0b8e92144ec8adc99d837e581709.r2.dev').replace(/\/$/, '');
+      const pathParts = imgUrl.split('/templates/');
+      if (pathParts.length > 1) {
+        imgUrl = `${publicBase}/templates/${pathParts[1]}`;
+      }
     }
+
+    if (!imgUrl || typeof imgUrl !== 'string' || !imgUrl.startsWith('http') || imgUrl.startsWith('blob:') || imgUrl.includes('r2.cloudflarestorage.com')) {
+      imgUrl = 'https://pub-922d0b8e92144ec8adc99d837e581709.r2.dev/templates/1788359049295-0a037ab5553e45de7a3da761.jpg';
+    }
+
     params.push({
       type: 'image',
       parameter_name: 'header_image',

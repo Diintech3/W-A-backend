@@ -17,7 +17,7 @@ function getClient() {
 }
 
 function getPublicBaseUrl() {
-  return process.env.R2_PUBLIC_URL || process.env.R2_ENDPOINT;
+  return (process.env.R2_PUBLIC_URL || 'https://pub-922d0b8e92144ec8adc99d837e581709.r2.dev').replace(/\/$/, '');
 }
 
 function getR2KeyFromUrl(url) {
@@ -86,10 +86,8 @@ async function uploadBuffer({ buffer, filename, mimetype, folder = 'uploads' }) 
     })
   );
 
-  const base = getPublicBaseUrl().replace(/\/$/, '');
-  const url = process.env.R2_PUBLIC_URL 
-    ? `${base}/${key}` 
-    : `${base}/${bucket}/${key}`;
+  const base = getPublicBaseUrl();
+  const url = `${base}/${key}`;
 
   return {
     key,

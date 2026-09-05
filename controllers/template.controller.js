@@ -8,6 +8,23 @@ const {
   refreshTemplateStatus,
 } = require('../services/whatsapp.service');
 
+function sanitizeMediaUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  let str = url.trim();
+  if (str.includes('r2.cloudflarestorage.com')) {
+    const publicBase = (process.env.R2_PUBLIC_URL || 'https://pub-922d0b8e92144ec8adc99d837e581709.r2.dev').replace(/\/$/, '');
+    const pathParts = str.split('/templates/');
+    if (pathParts.length > 1) {
+      return `${publicBase}/templates/${pathParts[1]}`;
+    }
+    const anyParts = str.split('/yovoai/');
+    if (anyParts.length > 1) {
+      return `${publicBase}/${anyParts[1]}`;
+    }
+  }
+  return str;
+}
+
 // ─── CLIENT: apni assigned templates list ────────────────────────────────────
 exports.listTemplates = async (req, res) => {
   try {
@@ -81,6 +98,8 @@ exports.createTemplate = async (req, res) => {
       return fail(res, 'Template with this name already exists', 400);
     }
 
+    const cleanMediaUrl = sanitizeMediaUrl(mediaUrl);
+
     // Client templates will be owned by their parent Admin and assigned to this client
     const template = await Template.create({
       userId: req.user.parentAdmin || req.user._id, // Owner is parent admin (who holds the Meta API keys)
@@ -93,7 +112,7 @@ exports.createTemplate = async (req, res) => {
       bodyPreview: bodyText,
       headerText: headerText || '',
       headerType: headerType || (headerText ? 'TEXT' : 'NONE'),
-      mediaUrl: mediaUrl || '',
+      mediaUrl: cleanMediaUrl,
       mediaHandle: mediaHandle || '',
       buttons: Array.isArray(buttons) ? buttons : [],
       footerText: footerText || '',
@@ -129,7 +148,7 @@ exports.updateTemplate = async (req, res) => {
       if (req.body.headerType) template.headerType = req.body.headerType;
       if (req.body.headerText !== undefined) template.headerText = req.body.headerText;
       if (req.body.footerText !== undefined) template.footerText = req.body.footerText;
-      if (req.body.mediaUrl !== undefined) template.mediaUrl = req.body.mediaUrl;
+      if (req.body.mediaUrl !== undefined) template.mediaUrl = sanitizeMediaUrl(req.body.mediaUrl);
       if (req.body.buttons !== undefined) template.buttons = req.body.buttons;
 
       await template.save();
@@ -626,7 +645,7 @@ exports.adminApproveAndSubmit = async (req, res) => {
       headerType: template.headerType || (finalHeaderText ? 'TEXT' : 'NONE'),
       headerText: finalHeaderText,
       footerText: template.footerText || '',
-      mediaUrl: template.mediaUrl || '',
+      mediaUrl: sanitizeMediaUrl(template.mediaUrl) || '',
       mediaHandle: template.mediaHandle || '',
       buttons: Array.isArray(template.buttons) ? template.buttons : [],
       headerVariables: headerParams,
